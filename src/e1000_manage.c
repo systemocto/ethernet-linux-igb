@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2007 - 2024 Intel Corporation. */
+/* Copyright(c) 2007 - 2025 Intel Corporation. */
 
 #include "e1000_api.h"
 #include "e1000_manage.h"

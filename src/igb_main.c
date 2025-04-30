@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2007 - 2024 Intel Corporation. */
+/* Copyright(c) 2007 - 2025 Intel Corporation. */
 
 #include <linux/module.h>
 #include <linux/types.h>
@@ -30,6 +30,9 @@
 #include "igb.h"
 #include "igb_vmdq.h"
 
+#include "kcompat_sigil.h"
+#include "kcompat_generated_defs.h"
+
 #if defined(DEBUG) || defined(DEBUG_DUMP) || defined(DEBUG_ICR) \
 	|| defined(DEBUG_ITR)
 #define DRV_DEBUG "_debug"
@@ -39,13 +42,13 @@
 #define DRV_HW_PERF
 #define VERSION_SUFFIX
 
-#define DRV_VERSION	"5.18.7" VERSION_SUFFIX DRV_DEBUG DRV_HW_PERF
+#define DRV_VERSION	"5.19.2" VERSION_SUFFIX DRV_DEBUG DRV_HW_PERF
 #define DRV_SUMMARY	"Intel(R) Gigabit Ethernet Linux Driver"
 
 char igb_driver_name[] = "igb";
 char igb_driver_version[] = DRV_VERSION;
 static const char igb_driver_string[] = DRV_SUMMARY;
-static const char igb_copyright[] = "Copyright(c) 2007 - 2024 Intel Corporation.";
+static const char igb_copyright[] = "Copyright(c) 2007 - 2025 Intel Corporation.";
 
 static const struct pci_device_id igb_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_I354_BACKPLANE_1GBPS) },
@@ -2188,25 +2191,13 @@ static int igb_set_features(struct net_device *netdev,
 #endif /* HAVE_NDO_SET_FEATURES */
 
 #ifdef HAVE_FDB_OPS
-#if defined(HAVE_NDO_FDB_ADD_EXTACK)
 static int
-igb_ndo_fdb_add(struct ndmsg *ndm, struct nlattr __always_unused *tb[],
-		struct net_device *dev, const unsigned char *addr, u16 vid,
-		u16 flags, struct netlink_ext_ack __always_unused *extack)
-#elif defined(HAVE_NDO_FDB_ADD_VID)
-static int
-igb_ndo_fdb_add(struct ndmsg *ndm, struct nlattr __always_unused *tb[],
-		struct net_device *dev, const unsigned char *addr, u16 vid,
-		u16 flags)
-#elif defined(USE_CONST_DEV_UC_CHAR)
-static int
-igb_ndo_fdb_add(struct ndmsg *ndm, struct nlattr __always_unused *tb[],
-		struct net_device *dev, const unsigned char *addr, u16 flags)
-#else
-static int
-igb_ndo_fdb_add(struct ndmsg *ndm, struct nlattr __always_unused *tb[],
-		struct net_device *dev, unsigned char *addr, u16 flags)
-#endif
+igb_ndo_fdb_add(struct ndmsg *ndm, struct nlattr *tb[],
+		struct net_device *dev, const unsigned char *addr,
+		$_(HAVE_NDO_FDB_ADD_VID, u16 vid)
+		u16 flags
+		_$(HAVE_NDO_FDB_ADD_NOTIFIED, bool *notified)
+		_$(HAVE_NDO_FDB_ADD_EXTACK, struct netlink_ext_ack __always_unused *extack))
 {
 	struct igb_adapter *adapter = netdev_priv(dev);
 	struct e1000_hw *hw = &adapter->hw;
@@ -2298,51 +2289,6 @@ igb_features_check(struct sk_buff *skb, struct net_device *dev,
 #endif /* NETIF_F_GSO_PARTIAL */
 #endif /* HAVE_NDO_FEATURES_CHECK */
 
-#ifndef USE_DEFAULT_FDB_DEL_DUMP
-#ifdef USE_CONST_DEV_UC_CHAR
-static int igb_ndo_fdb_del(struct ndmsg *ndm,
-			   struct net_device *dev,
-			   const unsigned char *addr)
-#else
-static int igb_ndo_fdb_del(struct ndmsg *ndm,
-			   struct net_device *dev,
-			   unsigned char *addr)
-#endif /* USE_CONST_DEV_UC_CHAR */
-{
-	struct igb_adapter *adapter = netdev_priv(dev);
-	int err = -EOPNOTSUPP;
-
-	if (ndm->ndm_state & NUD_PERMANENT) {
-		IGB_INF("%s: FDB only supports static addresses\n",
-			igb_driver_name);
-		return -EINVAL;
-	}
-
-	if (adapter->vfs_allocated_count) {
-		if (is_unicast_ether_addr(addr))
-			err = dev_uc_del(dev, addr);
-		else if (is_multicast_ether_addr(addr))
-			err = dev_mc_del(dev, addr);
-		else
-			err = -EINVAL;
-	}
-
-	return err;
-}
-
-static int igb_ndo_fdb_dump(struct sk_buff *skb,
-			    struct netlink_callback *cb,
-			    struct net_device *dev,
-			    int idx)
-{
-	struct igb_adapter *adapter = netdev_priv(dev);
-
-	if (adapter->vfs_allocated_count)
-		idx = ndo_dflt_fdb_dump(skb, cb, dev, idx);
-
-	return idx;
-}
-#endif /* USE_DEFAULT_FDB_DEL_DUMP */
 #ifdef HAVE_BRIDGE_ATTRIBS
 #ifdef HAVE_NDO_BRIDGE_SETLINK_EXTACK
 static int igb_ndo_bridge_setlink(struct net_device *dev,
@@ -2497,10 +2443,6 @@ static const struct net_device_ops igb_netdev_ops = {
 #endif
 #ifdef HAVE_FDB_OPS
 	.ndo_fdb_add		= igb_ndo_fdb_add,
-#ifndef USE_DEFAULT_FDB_DEL_DUMP
-	.ndo_fdb_del		= igb_ndo_fdb_del,
-	.ndo_fdb_dump		= igb_ndo_fdb_dump,
-#endif
 #ifdef HAVE_BRIDGE_ATTRIBS
 	.ndo_bridge_setlink	= igb_ndo_bridge_setlink,
 	.ndo_bridge_getlink	= igb_ndo_bridge_getlink,
@@ -7212,7 +7154,7 @@ static void igb_vf_reset_msg(struct igb_adapter *adapter, u32 vf)
 	struct e1000_hw *hw = &adapter->hw;
 	unsigned char *vf_mac = adapter->vf_data[vf].vf_mac_addresses;
 	int rar_entry = hw->mac.rar_entry_count - (vf + 1);
-	u32 reg, msgbuf[3];
+	u32 reg, msgbuf[3] = {0};
 	u8 *addr = (u8 *)(&msgbuf[1]);
 
 	/* process all the same items cleared in a function level reset */
@@ -10287,7 +10229,7 @@ static void igb_vmm_control(struct igb_adapter *adapter)
  */
 static u32 igb_get_os_driver_version(void)
 {
-	static const char driver_version[] = "5.18.7";
+	static const char driver_version[] = "5.19.2";
 	u8 driver_version_num[] = {0, 0, 0, 0};
 	char const *c = driver_version;
 	uint pos;
