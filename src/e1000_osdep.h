@@ -8,12 +8,13 @@
 #ifndef _E1000_OSDEP_H_
 #define _E1000_OSDEP_H_
 
+#include "kcompat.h"
+
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/if_ether.h>
 #include <linux/sched.h>
-#include "kcompat.h"
 
 #define usec_delay(x) udelay(x)
 #define usec_delay_irq(x) udelay(x)

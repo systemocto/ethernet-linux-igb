@@ -1,10 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Copyright(c) 2007 - 2025 Intel Corporation. */
 
+#include "igb.h"
 
 #include <linux/netdevice.h>
-
-#include "igb.h"
 
 /* This is the only thing that needs to be changed to adjust the
  * maximum number of ports that the driver can manage.

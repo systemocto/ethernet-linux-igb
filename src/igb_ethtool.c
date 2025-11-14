@@ -2,6 +2,7 @@
 /* Copyright(c) 2007 - 2025 Intel Corporation. */
 
 /* ethtool support for igb */
+#include "igb.h"
 
 #include <linux/netdevice.h>
 #include <linux/vmalloc.h>
@@ -13,7 +14,6 @@
 #endif /* CONFIG_PM_RUNTIME */
 #include <linux/highmem.h>
 
-#include "igb.h"
 #include "igb_regtest.h"
 #include <linux/if_vlan.h>
 #ifdef ETHTOOL_GEEE

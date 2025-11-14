@@ -1,10 +1,10 @@
 Name: igb
 Summary: Intel(R) Gigabit Ethernet Linux Driver
-Version: 5.19.4
+Version: 5.19.9
 Release: 1
 Source: %{name}-%{version}.tar.gz
 Vendor: Intel Corporation
-License: GPL
+License: GPLv2
 ExclusiveOS: linux
 Group: System Environment/Kernel
 Provides: %{name}
@@ -55,11 +55,9 @@ $(KSRC=%{_usrsrc}/kernels/%{kernel_ver} %{_signfile} sha512 %{privkey} %{pubkey}
 done
 %endif
 
-# Append .new to driver name to avoid conflict with kernel RPM
 cd %{buildroot}
-find lib -name "igb.*o" -exec mv {} {}.new \; \
-         -fprintf %{_builddir}/%{name}-%{version}/file.list "/%p.new\n"
-find lib/modules -name modules.* -exec rm -f {} \;
+find . -name "igb.ko" -printf "/%p\n" \
+	>%{_builddir}/%{name}-%{version}/file.list
 
 
 
@@ -86,33 +84,15 @@ if [ -d /usr/local/share/%{name} ]; then
 	rm -rf /usr/local/share/%{name}
 fi
 
-# Save old drivers (aka .ko and .ko.gz)
 echo "original pci.ids saved in /usr/local/share/%{name}";
+cp --parents %{pciids} /usr/local/share/%{name}/
 if [ "%{pcitable}" != "/dev/null" ]; then
 	echo "original pcitable saved in /usr/local/share/%{name}";
+	cp --parents %{pcitable} /usr/local/share/%{name}/
 fi
-for k in $(sed 's#/lib/modules/\([0-9a-zA-Z.+_-]*\).*$#\1#' $FL) ;
-do
-	d_drivers=/lib/modules/$k
-	d_usr=/usr/local/share/%{name}/$k
-	mkdir -p $d_usr
-	cd $d_drivers; find . -name %{name}.*o -exec cp --parents {} $d_usr \; -exec rm -f {} \;
-	cd $d_drivers; find . -name %{name}_*.*o -exec cp --parents {} $d_usr \; -exec rm -f {} \;
-	cd $d_drivers; find . -name %{name}.*o.gz -exec cp --parents {} $d_usr \; -exec rm -f {} \;
-	cd $d_drivers; find . -name %{name}_*.*o.gz -exec cp --parents {} $d_usr \; -exec rm -f {} \;
-	cp --parents %{pciids} /usr/local/share/%{name}/
-	if [ "%{pcitable}" != "/dev/null" ]; then
-		cp --parents %{pcitable} /usr/local/share/%{name}/
-	fi
-done
-
-# Add driver link
-for f in $(sed 's/\.new$//' $FL) ; do
-	ln -f $f.new $f
-done
 
 # Check if kernel version rpm was built on IS the same as running kernel
-BK_LIST=$(sed 's#/lib/modules/\([0-9a-zA-Z.+_-]*\).*$#\1#' $FL) ;
+BK_LIST=$(sed -r 's#.+/modules/([0-9a-zA-Z.+_-]*)/.+#\1#' $FL)
 MATCH=no
 for i in $BK_LIST
 do
@@ -438,21 +418,7 @@ cat %{_docdir}/%{name}/file.list | grep '\.ko$' | xargs realpath > /var/run/rpm-
 
 # If doing RPM un-install
 if [ $1 -eq 0 ] ; then
-	FL="%{_docdir}/%{name}-%{version}/file.list
-    		%{_docdir}/%{name}/file.list"
-	FL=$(for d in $FL ; do if [ -e $d ]; then echo $d; break; fi;  done)
-
-	# Remove driver link
-	for f in $(sed 's/\.new$//' $FL) ; do
-		rm -f $f
-	done
-
-	# Restore old drivers
-	if [ -d /usr/local/share/%{name} ]; then
-		cd /usr/local/share/%{name}; find . -name '%{name}.*o*' -exec cp --parents {} /lib/modules/ \;
-		cd /usr/local/share/%{name}; find . -name '%{name}_*.*o*' -exec cp --parents {} /lib/modules/ \;
-		rm -rf /usr/local/share/%{name}
-	fi
+	:
 fi
 
 %postun

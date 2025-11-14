@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Copyright(c) 2007 - 2025 Intel Corporation. */
 
+#include "igb.h"
+
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/init.h>
@@ -27,10 +29,8 @@
 #endif /* CONFIG_PM_RUNTIME */
 
 #include <linux/if_bridge.h>
-#include "igb.h"
 #include "igb_vmdq.h"
 
-#include "kcompat_sigil.h"
 #include "kcompat_generated_defs.h"
 
 #if defined(DEBUG) || defined(DEBUG_DUMP) || defined(DEBUG_ICR) \
@@ -42,7 +42,7 @@
 #define DRV_HW_PERF
 #define VERSION_SUFFIX
 
-#define DRV_VERSION	"5.19.4" VERSION_SUFFIX DRV_DEBUG DRV_HW_PERF
+#define DRV_VERSION	"5.19.9" VERSION_SUFFIX DRV_DEBUG DRV_HW_PERF
 #define DRV_SUMMARY	"Intel(R) Gigabit Ethernet Linux Driver"
 
 char igb_driver_name[] = "igb";
@@ -1877,10 +1877,10 @@ void igb_down(struct igb_adapter *adapter)
 
 	adapter->flags &= ~IGB_FLAG_NEED_LINK_UPDATE;
 
-	del_timer_sync(&adapter->watchdog_timer);
+	timer_delete_sync(&adapter->watchdog_timer);
 	if (adapter->flags & IGB_FLAG_DETECT_BAD_DMA)
-		del_timer_sync(&adapter->dma_err_timer);
-	del_timer_sync(&adapter->phy_info_timer);
+		timer_delete_sync(&adapter->dma_err_timer);
+	timer_delete_sync(&adapter->phy_info_timer);
 
 	/* record the stats before reset*/
 	igb_update_stats(adapter);
@@ -2022,7 +2022,11 @@ void igb_reset(struct igb_adapter *adapter)
 			((pba << 10) - 2 * adapter->max_frame_size));
 
 	fc->high_water = hwm & 0xFFFFFFF0;	/* 16-byte granularity */
-	fc->low_water = fc->high_water - 16;
+	if (fc->high_water > 16)
+		fc->low_water = fc->high_water - 16;
+	else
+		fc->low_water = 0;
+
 	fc->pause_time = 0xFFFF;
 	fc->send_xon = 1;
 	fc->current_mode = fc->requested_mode;
@@ -2194,10 +2198,17 @@ static int igb_set_features(struct net_device *netdev,
 static int
 igb_ndo_fdb_add(struct ndmsg *ndm, struct nlattr *tb[],
 		struct net_device *dev, const unsigned char *addr,
-		$_(HAVE_NDO_FDB_ADD_VID, u16 vid)
+#ifdef HAVE_NDO_FDB_ADD_VID
+		u16 vid,
+#endif
 		u16 flags
-		_$(HAVE_NDO_FDB_ADD_NOTIFIED, bool *notified)
-		_$(HAVE_NDO_FDB_ADD_EXTACK, struct netlink_ext_ack __always_unused *extack))
+#ifdef HAVE_NDO_FDB_ADD_NOTIFIED
+		, bool *notified
+#endif
+#ifdef HAVE_NDO_FDB_ADD_EXTACK
+		, struct netlink_ext_ack __always_unused *extack
+#endif
+)
 {
 	struct igb_adapter *adapter = netdev_priv(dev);
 	struct e1000_hw *hw = &adapter->hw;
@@ -3365,10 +3376,10 @@ static void igb_remove(struct pci_dev *pdev)
 	 * explicitly disable watchdog tasks from being rescheduled
 	 */
 	set_bit(__IGB_DOWN, adapter->state);
-	del_timer_sync(&adapter->watchdog_timer);
+	timer_delete_sync(&adapter->watchdog_timer);
 	if (adapter->flags & IGB_FLAG_DETECT_BAD_DMA)
-		del_timer_sync(&adapter->dma_err_timer);
-	del_timer_sync(&adapter->phy_info_timer);
+		timer_delete_sync(&adapter->dma_err_timer);
+	timer_delete_sync(&adapter->phy_info_timer);
 
 	cancel_work_sync(&adapter->reset_task);
 	cancel_work_sync(&adapter->watchdog_task);
@@ -4890,7 +4901,7 @@ static void igb_spoof_check(struct igb_adapter *adapter)
  /* Need to wait a few seconds after link up to get diagnostic info */
 static void igb_update_phy_info(struct timer_list *t)
 {
-	struct igb_adapter *adapter = from_timer(adapter, t, phy_info_timer);
+	struct igb_adapter *adapter = timer_container_of(adapter, t, phy_info_timer);
 
 	e1000_get_phy_info(&adapter->hw);
 }
@@ -4943,7 +4954,7 @@ bool igb_has_link(struct igb_adapter *adapter)
  **/
 static void igb_watchdog(struct timer_list *t)
 {
-	struct igb_adapter *adapter = from_timer(adapter, t, watchdog_timer);
+	struct igb_adapter *adapter = timer_container_of(adapter, t, watchdog_timer);
 	/* Do the rest outside of interrupt context */
 	schedule_work(&adapter->watchdog_task);
 }
@@ -5201,7 +5212,7 @@ dma_timer_reset:
  **/
 static void igb_dma_err_timer(struct timer_list *t)
 {
-	struct igb_adapter *adapter = from_timer(adapter, t, dma_err_timer);
+	struct igb_adapter *adapter = timer_container_of(adapter, t, dma_err_timer);
 	/* Do the rest outside of interrupt context */
 	schedule_work(&adapter->dma_err_task);
 }
@@ -6350,13 +6361,19 @@ void igb_update_stats(struct igb_adapter *adapter)
 
 	adapter->stats.iac += E1000_READ_REG(hw, E1000_IAC);
 	adapter->stats.icrxoc += E1000_READ_REG(hw, E1000_ICRXOC);
-	adapter->stats.icrxptc += E1000_READ_REG(hw, E1000_ICRXPTC);
 	adapter->stats.icrxatc += E1000_READ_REG(hw, E1000_ICRXATC);
 	adapter->stats.ictxptc += E1000_READ_REG(hw, E1000_ICTXPTC);
 	adapter->stats.ictxatc += E1000_READ_REG(hw, E1000_ICTXATC);
-	adapter->stats.ictxqec += E1000_READ_REG(hw, E1000_ICTXQEC);
 	adapter->stats.ictxqmtc += E1000_READ_REG(hw, E1000_ICTXQMTC);
 	adapter->stats.icrxdmtc += E1000_READ_REG(hw, E1000_ICRXDMTC);
+
+	/* These two registers have overlapping addresses with RPTHC and HGPTC
+	 * starting from 82575 HW.
+	 */
+	if (hw->mac.type < e1000_82575) {
+		adapter->stats.icrxptc += E1000_READ_REG(hw, E1000_ICRXPTC);
+		adapter->stats.ictxqec += E1000_READ_REG(hw, E1000_ICTXQEC);
+	}
 
 	/* Fill out the OS statistics structure */
 	net_stats->multicast = adapter->stats.mprc;
@@ -9319,7 +9336,7 @@ static int igb_resume(struct pci_dev *pdev)
 	struct net_device *netdev = pci_get_drvdata(pdev);
 	struct igb_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
-	u32 err;
+	int err;
 
 	pci_set_power_state(pdev, PCI_D0);
 	pci_restore_state(pdev);
@@ -10229,7 +10246,7 @@ static void igb_vmm_control(struct igb_adapter *adapter)
  */
 static u32 igb_get_os_driver_version(void)
 {
-	static const char driver_version[] = "5.19.4";
+	static const char driver_version[] = "5.19.9";
 	u8 driver_version_num[] = {0, 0, 0, 0};
 	char const *c = driver_version;
 	uint pos;
