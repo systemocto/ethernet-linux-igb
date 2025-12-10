@@ -42,7 +42,7 @@
 #define DRV_HW_PERF
 #define VERSION_SUFFIX
 
-#define DRV_VERSION	"5.19.9" VERSION_SUFFIX DRV_DEBUG DRV_HW_PERF
+#define DRV_VERSION	"5.19.10" VERSION_SUFFIX DRV_DEBUG DRV_HW_PERF
 #define DRV_SUMMARY	"Intel(R) Gigabit Ethernet Linux Driver"
 
 char igb_driver_name[] = "igb";
@@ -4901,7 +4901,8 @@ static void igb_spoof_check(struct igb_adapter *adapter)
  /* Need to wait a few seconds after link up to get diagnostic info */
 static void igb_update_phy_info(struct timer_list *t)
 {
-	struct igb_adapter *adapter = timer_container_of(adapter, t, phy_info_timer);
+	struct igb_adapter *adapter =
+		container_of(t, struct igb_adapter, phy_info_timer);
 
 	e1000_get_phy_info(&adapter->hw);
 }
@@ -4954,7 +4955,8 @@ bool igb_has_link(struct igb_adapter *adapter)
  **/
 static void igb_watchdog(struct timer_list *t)
 {
-	struct igb_adapter *adapter = timer_container_of(adapter, t, watchdog_timer);
+	struct igb_adapter *adapter =
+		container_of(t, struct igb_adapter, watchdog_timer);
 	/* Do the rest outside of interrupt context */
 	schedule_work(&adapter->watchdog_task);
 }
@@ -5212,7 +5214,8 @@ dma_timer_reset:
  **/
 static void igb_dma_err_timer(struct timer_list *t)
 {
-	struct igb_adapter *adapter = timer_container_of(adapter, t, dma_err_timer);
+	struct igb_adapter *adapter =
+		container_of(t, struct igb_adapter, dma_err_timer);
 	/* Do the rest outside of interrupt context */
 	schedule_work(&adapter->dma_err_task);
 }
@@ -10246,7 +10249,7 @@ static void igb_vmm_control(struct igb_adapter *adapter)
  */
 static u32 igb_get_os_driver_version(void)
 {
-	static const char driver_version[] = "5.19.9";
+	static const char driver_version[] = "5.19.10";
 	u8 driver_version_num[] = {0, 0, 0, 0};
 	char const *c = driver_version;
 	uint pos;
