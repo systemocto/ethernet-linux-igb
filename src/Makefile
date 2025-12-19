@@ -2,6 +2,9 @@
 # Copyright(c) 2007 - 2025 Intel Corporation.
 
 ifneq ($(KERNELRELEASE),)
+src ?= .
+include $(src)/common.mk
+
 # kbuild part of makefile
 #
 # Makefile for the Intel(R) Gigabit Ethernet Linux Driver

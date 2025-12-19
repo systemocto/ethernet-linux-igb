@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Copyright(c) 2007 - 2025 Intel Corporation. */
 
+#include "igb.h"
 
 #include <linux/tcp.h>
 
-#include "igb.h"
 #include "igb_vmdq.h"
 #include <linux/if_vlan.h>
 

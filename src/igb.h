@@ -2,9 +2,10 @@
 /* Copyright(c) 2007 - 2025 Intel Corporation. */
 
 /* Linux PRO/1000 Ethernet Driver main header file */
-
 #ifndef _IGB_H_
 #define _IGB_H_
+
+#include "kcompat.h"
 
 #include <linux/kobject.h>
 
@@ -28,8 +29,6 @@ struct igb_adapter;
 #ifdef IGB_DCA
 #include <linux/dca.h>
 #endif
-
-#include "kcompat.h"
 
 #ifdef HAVE_SCTP
 #include <linux/sctp.h>
