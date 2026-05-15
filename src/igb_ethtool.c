@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2007 - 2025 Intel Corporation. */
+/* Copyright(c) 2007 - 2026 Intel Corporation. */
 
 /* ethtool support for igb */
 #include "igb.h"
@@ -1892,8 +1892,9 @@ static void igb_setup_loopback_test(struct igb_adapter *adapter)
 static void igb_loopback_cleanup(struct igb_adapter *adapter)
 {
 	struct e1000_hw *hw = &adapter->hw;
-	u32 rctl;
+	s32 ret_val;
 	u16 phy_reg;
+	u32 rctl;
 
 	if ((hw->device_id == E1000_DEV_ID_DH89XXCC_SGMII) ||
 	    (hw->device_id == E1000_DEV_ID_DH89XXCC_SERDES) ||
@@ -1918,7 +1919,11 @@ static void igb_loopback_cleanup(struct igb_adapter *adapter)
 	E1000_WRITE_REG(hw, E1000_RCTL, rctl);
 
 	hw->mac.autoneg = TRUE;
-	e1000_read_phy_reg(hw, PHY_CONTROL, &phy_reg);
+	ret_val = e1000_read_phy_reg(hw, PHY_CONTROL, &phy_reg);
+
+	if (ret_val != E1000_SUCCESS)
+		return;
+
 	if (phy_reg & MII_CR_LOOPBACK) {
 		phy_reg &= ~MII_CR_LOOPBACK;
 		if (hw->phy.id == I210_I_PHY_ID)
@@ -1927,6 +1932,7 @@ static void igb_loopback_cleanup(struct igb_adapter *adapter)
 		e1000_phy_commit(hw);
 	}
 }
+
 static void igb_create_lbtest_frame(struct sk_buff *skb,
 				    unsigned int frame_size)
 {

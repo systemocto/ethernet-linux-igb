@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2007 - 2025 Intel Corporation. */
+/* Copyright(c) 2007 - 2026 Intel Corporation. */
 
 #include "e1000_api.h"
 
@@ -58,6 +58,7 @@ void e1000_init_phy_ops_generic(struct e1000_hw *hw)
 	phy->ops.write_reg_page = e1000_null_write_reg;
 	phy->ops.power_up = e1000_null_phy_generic;
 	phy->ops.power_down = e1000_null_phy_generic;
+	phy->ops.get_an_status = e1000_null_an_status;
 	phy->ops.read_i2c_byte = e1000_read_i2c_byte_null;
 	phy->ops.write_i2c_byte = e1000_write_i2c_byte_null;
 }
@@ -119,6 +120,20 @@ s32 e1000_null_write_reg(struct e1000_hw E1000_UNUSEDARG *hw,
 			 u32 E1000_UNUSEDARG offset, u16 E1000_UNUSEDARG data)
 {
 	DEBUGFUNC("e1000_null_write_reg");
+	return E1000_SUCCESS;
+}
+
+/**
+ *  e1000_null_link_info - No-op function, return 0
+ *  @hw: pointer to the HW structure
+ *  @status: dummy variable
+ **/
+s32 e1000_null_an_status(struct e1000_hw E1000_UNUSEDARG *hw,
+			u8 *status)
+{
+	DEBUGFUNC("e1000_null_an_status");
+	*status = e1000_an_status_unavailable;
+
 	return E1000_SUCCESS;
 }
 
@@ -232,7 +247,7 @@ s32 e1000_phy_reset_dsp_generic(struct e1000_hw *hw)
 	return hw->phy.ops.write_reg(hw, M88E1000_PHY_GEN_CONTROL, 0);
 }
 
-void e1000_disable_phy_retry_mechanism(struct e1000_hw* hw, u32* phy_retries_original)
+void e1000_disable_phy_retry_mechanism(struct e1000_hw *hw, u32 *phy_retries_original)
 {
 	DEBUGFUNC("e1000_disable_phy_retry_mechanism");
 
@@ -241,7 +256,7 @@ void e1000_disable_phy_retry_mechanism(struct e1000_hw* hw, u32* phy_retries_ori
 	hw->phy.current_retry_counter = 0;
 }
 
-void e1000_enable_phy_retry_mechanism(struct e1000_hw* hw, u32 phy_retries_original)
+void e1000_enable_phy_retry_mechanism(struct e1000_hw *hw, u32 phy_retries_original)
 {
 	DEBUGFUNC("e1000_enable_phy_retry_mechanism");
 
@@ -318,7 +333,6 @@ s32 e1000_read_phy_reg_mdic(struct e1000_hw *hw, u32 offset, u16 *data)
 			msec_delay_irq(10);
 		}
 	}
-
 
 	return -E1000_ERR_PHY;
 }
@@ -2274,6 +2288,71 @@ static s32 e1000_wait_autoneg(struct e1000_hw *hw)
 	/* PHY_AUTO_NEG_TIME expiration doesn't guarantee auto-negotiation
 	 * has completed.
 	 */
+	return ret_val;
+}
+
+/**
+ *  e1000_1gbase_t_autoneg_status - Gets information on current AN status.
+ *  @hw: pointer to the HW structure
+ *  @an_status: pointer to the AN status
+ *
+ *  The function finds the Auto-negotiation status of 1000BASE-T PHY based on
+ *  the data from PHY Status (PSTATUS) and Auto–Negotiation Expansion (ANE)
+ *  PHY registers.
+ *
+ *  @note The function will report Auto-negotiation OFF when there is no
+ *  media connected to the port. When used during the PHY reset, it might not 
+ *  report a valid status.
+**/
+s32 e1000_1gbase_t_autoneg_status (struct e1000_hw *hw, u8 *an_status)
+{
+	s32 ret_val = E1000_SUCCESS;
+	u16 phy_reg = 0;
+
+	DEBUGFUNC ("e1000_1gbase_t_autoneg_status\n");
+
+	do {
+		*an_status = e1000_an_status_unavailable;
+		ret_val = e1000_read_phy_reg(hw, PHY_STATUS, &phy_reg);
+		if (ret_val) {
+			DEBUGOUT1("Reading PHY STATUS register returned error: %X\n", ret_val);
+			break;
+		}
+
+		if (!(phy_reg & PHY_STATUS_AN_ABILITY_MASK)) {
+			*an_status = e1000_an_off;
+			break;
+		}
+
+		if (phy_reg & (PHY_STATUS_AN_COMPLETE_MASK | PHY_STATUS_LINK_STATUS_MASK)) {
+			*an_status = e1000_an_complete;
+			break;
+		}
+		
+		if (phy_reg & PHY_STATUS_REMOTE_FAULT_MASK) {
+			*an_status = e1000_an_failed;
+			break;
+		}
+
+		ret_val = e1000_read_phy_reg(hw, PHY_AUTONEG_EXP, &phy_reg);
+		if (ret_val) {
+			DEBUGOUT1("Reading PHY ANE register returned error: %X\n", ret_val);
+			break;
+		}
+
+		if (!(phy_reg & PHY_AUTONEG_EXP_LP_AN_ABLE_MASK)) {
+			*an_status = e1000_an_off;
+			break;
+		}
+
+		if (phy_reg & PHY_AUTONEG_EXP_PARALLEL_DETECT_FLT_MASK) {
+			*an_status = e1000_an_failed;
+			break;
+		}
+
+		*an_status = e1000_an_in_progress;
+	} while (0);
+
 	return ret_val;
 }
 

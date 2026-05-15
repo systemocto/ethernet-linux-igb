@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright(c) 2007 - 2025 Intel Corporation.
+# Copyright(c) 2007 - 2026 Intel Corporation.
 
 ifneq ($(KERNELRELEASE),)
 src ?= .
@@ -37,6 +37,10 @@ igb-$(CONFIG_PTP_1588_CLOCK:m=y) += igb_ptp.o
 
 
 igb-y += kcompat.o
+
+ifeq ($(shell grep HAVE_XARRAY_API $(src)/kcompat_generated_defs.h),)
+igb-y += kcompat_xarray.o
+endif
 
 else	# ifneq($(KERNELRELEASE),)
 # normal makefile

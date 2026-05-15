@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2007 - 2025 Intel Corporation. */
+/* Copyright(c) 2007 - 2026 Intel Corporation. */
 
 #ifndef _E1000_PHY_H_
 #define _E1000_PHY_H_
@@ -10,6 +10,7 @@ void e1000_null_phy_generic(struct e1000_hw *hw);
 s32  e1000_null_lplu_state(struct e1000_hw *hw, bool active);
 s32  e1000_null_write_reg(struct e1000_hw *hw, u32 offset, u16 data);
 s32  e1000_null_set_page(struct e1000_hw *hw, u16 data);
+s32 e1000_null_an_status(struct e1000_hw *hw, u8 *status);
 s32 e1000_read_i2c_byte_null(struct e1000_hw *hw, u8 byte_offset,
 			     u8 dev_addr, u8 *data);
 s32 e1000_write_i2c_byte_null(struct e1000_hw *hw, u8 byte_offset,
@@ -19,6 +20,7 @@ s32  e1000_check_polarity_m88(struct e1000_hw *hw);
 s32  e1000_check_polarity_igp(struct e1000_hw *hw);
 s32  e1000_check_polarity_ife(struct e1000_hw *hw);
 s32  e1000_check_reset_block_generic(struct e1000_hw *hw);
+s32  e1000_1gbase_t_autoneg_status (struct e1000_hw *hw, u8 *an_status);
 s32  e1000_copper_link_setup_igp(struct e1000_hw *hw);
 s32  e1000_copper_link_setup_m88(struct e1000_hw *hw);
 s32  e1000_copper_link_setup_m88_gen2(struct e1000_hw *hw);

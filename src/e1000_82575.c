@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2007 - 2025 Intel Corporation. */
+/* Copyright(c) 2007 - 2026 Intel Corporation. */
 
 /*
  * 82575EB Gigabit Network Connection
@@ -230,6 +230,7 @@ static s32 e1000_init_phy_params_82575(struct e1000_hw *hw)
 		phy->ops.set_d0_lplu_state = e1000_set_d0_lplu_state_82580;
 		phy->ops.set_d3_lplu_state = e1000_set_d3_lplu_state_82580;
 		phy->ops.force_speed_duplex = e1000_phy_force_speed_duplex_82577;
+		phy->ops.get_an_status = e1000_1gbase_t_autoneg_status;
 		break;
 	case I210_I_PHY_ID:
 		phy->type		= e1000_phy_i210;
@@ -2402,7 +2403,7 @@ s32 e1000_validate_nvm_checksum_with_offset(struct e1000_hw *hw, u16 offset)
 
 	DEBUGFUNC("e1000_validate_nvm_checksum_with_offset");
 
-	for (i = offset; i < ((NVM_CHECKSUM_REG + offset) + 1); i++) {
+	for (i = offset; i < (u16)((NVM_CHECKSUM_REG + offset) + 1); i++) {
 		ret_val = hw->nvm.ops.read(hw, i, 1, &nvm_data);
 		if (ret_val) {
 			DEBUGOUT("NVM Read Error\n");
@@ -2439,7 +2440,7 @@ s32 e1000_update_nvm_checksum_with_offset(struct e1000_hw *hw, u16 offset)
 
 	DEBUGFUNC("e1000_update_nvm_checksum_with_offset");
 
-	for (i = offset; i < (NVM_CHECKSUM_REG + offset); i++) {
+	for (i = offset; i < (u16)(NVM_CHECKSUM_REG + offset); i++) {
 		ret_val = hw->nvm.ops.read(hw, i, 1, &nvm_data);
 		if (ret_val) {
 			DEBUGOUT("NVM Read Error while updating checksum.\n");

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2007 - 2025 Intel Corporation. */
+/* Copyright(c) 2007 - 2026 Intel Corporation. */
 
 #ifndef _E1000_API_H_
 #define _E1000_API_H_
@@ -51,6 +51,7 @@ s32 e1000_write_phy_reg(struct e1000_hw *hw, u32 offset, u16 data);
 s32 e1000_write_8bit_ctrl_reg(struct e1000_hw *hw, u32 reg, u32 offset,
 			      u8 data);
 s32 e1000_get_phy_info(struct e1000_hw *hw);
+s32 e1000_get_an_status(struct e1000_hw *hw, u8 *an_status);
 void e1000_release_phy(struct e1000_hw *hw);
 s32 e1000_acquire_phy(struct e1000_hw *hw);
 s32 e1000_phy_hw_reset(struct e1000_hw *hw);
