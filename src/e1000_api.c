@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2007 - 2025 Intel Corporation. */
+/* Copyright(c) 2007 - 2026 Intel Corporation. */
 
 #include "e1000_api.h"
 
@@ -759,6 +759,22 @@ s32 e1000_get_phy_info(struct e1000_hw *hw)
 {
 	if (hw->phy.ops.get_info)
 		return hw->phy.ops.get_info(hw);
+
+	return E1000_SUCCESS;
+}
+
+/**
+ *  e1000_get_an_status - Finds Auto-negotiation status based on PHY registers
+ *  @hw: pointer to the HW structure
+ *  @an_status: AN status
+ *
+ *  This function gets information from the PHY specific registers to determine
+ *  Auto-negotiation status.
+ **/
+s32 e1000_get_an_status(struct e1000_hw *hw, u8 *an_status)
+{
+	if (hw->phy.ops.get_an_status)
+		return hw->phy.ops.get_an_status(hw, an_status);
 
 	return E1000_SUCCESS;
 }
