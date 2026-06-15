@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Copyright(c) 2007 - 2026 Intel Corporation. */
 
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _KCOMPAT_GCC_H_
 #define _KCOMPAT_GCC_H_
 
