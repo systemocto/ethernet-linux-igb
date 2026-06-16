@@ -2110,17 +2110,12 @@ static int igb_get_i2c_data2(void *data)
 {
         struct igb_adapter *adapter = (struct igb_adapter *)data;
         struct e1000_hw *hw = &adapter->hw;
-//        u32 ctrl_ext = rd32(E1000_CTRL_EXT);
         u32 ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
 
         ctrl_ext &= ~E1000_CTRL_EXT_SDP3_DIR;
 
-//        wr32(E1000_CTRL_EXT, ctrl_ext);
         E1000_WRITE_REG(hw, E1000_CTRL_EXT, ctrl_ext);
-//      usleep_range(10, 20);
-//        wr32(E1000_CTRL_EXT, ctrl_ext);
 
-//        ctrl_ext = rd32(E1000_CTRL_EXT);
         ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
 
         return !!(ctrl_ext & E1000_TS_SDP3_DATA);
@@ -2138,7 +2133,6 @@ static void igb_set_i2c_data2(void *data, int state)
 {
         struct igb_adapter *adapter = (struct igb_adapter *)data;
         struct e1000_hw *hw = &adapter->hw;
-//        u32 ctrl_ext = rd32(E1000_CTRL_EXT);
         u32 ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
 
         if (state) {
@@ -2152,11 +2146,7 @@ static void igb_set_i2c_data2(void *data, int state)
 //        ctrl_ext &= ~E1000_CTRL_EXT_SDP3_DIR;
         ctrl_ext &= ~E1000_CTRL_EXT_SDP2_DIR;
 
-//        wr32(E1000_CTRL_EXT, ctrl_ext);
         E1000_WRITE_REG(hw, E1000_CTRL_EXT, ctrl_ext);
-//      usleep_range(10, 20);
-//        wr32(E1000_CTRL_EXT, ctrl_ext);
-//        wrfl();
 	E1000_WRITE_FLUSH(hw);
 }
 
@@ -2173,7 +2163,6 @@ static void igb_set_i2c_clk2(void *data, int state)
         struct e1000_hw *hw = &adapter->hw;
         u32 ctrl_ext;
 
-//        ctrl_ext = rd32(E1000_CTRL_EXT);
         ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
 
         if (state) {
@@ -2184,11 +2173,7 @@ static void igb_set_i2c_clk2(void *data, int state)
                 ctrl_ext |= E1000_CTRL_EXT_SDP2_DIR;
         }
 
-//        wr32(E1000_CTRL_EXT, ctrl_ext);
         E1000_WRITE_REG(hw, E1000_CTRL_EXT, ctrl_ext);
-//      usleep_range(10, 20);
-//        wr32(E1000_CTRL_EXT, ctrl_ext);
-//        wrfl();
 	E1000_WRITE_FLUSH(hw);
 //      usleep_range(adapter->i2c_algo.udelay, adapter->i2c_algo.udelay + 10);
 }
@@ -2203,17 +2188,12 @@ static int igb_get_i2c_clk2(void *data)
 {
         struct igb_adapter *adapter = (struct igb_adapter *)data;
         struct e1000_hw *hw = &adapter->hw;
-//        u32 ctrl_ext = rd32(E1000_CTRL_EXT);
         u32 ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
 
         ctrl_ext &= ~E1000_CTRL_EXT_SDP2_DIR;
 
-//        wr32(E1000_CTRL_EXT, ctrl_ext);
         E1000_WRITE_REG(hw, E1000_CTRL_EXT, ctrl_ext);
-//      usleep_range(10, 20);
-//        wr32(E1000_CTRL_EXT, ctrl_ext);
 
-//        ctrl_ext = rd32(E1000_CTRL_EXT);
         ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
 
         return !!(ctrl_ext & E1000_TS_SDP2_DATA);
@@ -5081,11 +5061,8 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                 if(adapter->rtc_utc_tai > 0 && adapter->rtc_utc_tai < 50) rtc_tv_sec += adapter->rtc_utc_tai;
                 else adapter->rtc_utc_tai = 0;
 
-//                wr32(E1000_SYSTIMR, 0); //fraqtional ns
                 E1000_WRITE_REG(hw, E1000_SYSTIMR, 0); //fraqtional ns
-//                wr32(E1000_SYSTIML, (u32)rtc_tv_nsec);
                 E1000_WRITE_REG(hw, E1000_SYSTIML, (u32)rtc_tv_nsec);
-//                wr32(E1000_SYSTIMH, (u32)rtc_tv_sec);
                 E1000_WRITE_REG(hw, E1000_SYSTIMH, (u32)rtc_tv_sec);
 //                dev_info(&pdev->dev, "RTC: PHC initialized time=%lld.%lld +%i%s", rtc_tv_sec, rtc_tv_nsec, adapter->rtc_utc_tai, adapter->rtc_utc_tai ? " (UTC/TAI corrected)" : "(UTC)" );
                 dev_info(pci_dev_to_dev(pdev), "RTC: PHC initialized time=%lld.%lld +%i%s", rtc_tv_sec, rtc_tv_nsec, adapter->rtc_utc_tai, adapter->rtc_utc_tai ? " (UTC/TAI corrected)" : "(UTC)" );
@@ -9021,6 +8998,79 @@ void igb_update_stats(struct igb_adapter *adapter)
 	}
 }
 
+static void igb_tsync_interrupt(struct igb_adapter *adapter)
+{
+        struct e1000_hw *hw = &adapter->hw;
+        struct ptp_clock_event event;
+        struct timespec64 ts;
+        u32 ack = 0, tsauxc, sec, nsec, tsicr = E1000_READ_REG(hw, E1000_TSICR);
+
+        if (tsicr & TSINTR_SYS_WRAP) {
+                event.type = PTP_CLOCK_PPS;
+                if (adapter->ptp_caps.pps)
+                        ptp_clock_event(adapter->ptp_clock, &event);
+                ack |= TSINTR_SYS_WRAP;
+        }
+
+        if (tsicr & E1000_TSICR_TXTS) {
+                /* retrieve hardware timestamp */
+                schedule_work(&adapter->ptp_tx_work);
+                ack |= E1000_TSICR_TXTS;
+        }
+
+        if (tsicr & TSINTR_TT0) {
+                spin_lock(&adapter->tmreg_lock);
+                ts = timespec64_add(adapter->perout[0].start,
+                                    adapter->perout[0].period);
+                /* u32 conversion of tv_sec is safe until y2106 */
+                E1000_WRITE_REG(hw, E1000_TRGTTIML0, ts.tv_nsec);
+                E1000_WRITE_REG(hw, E1000_TRGTTIMH0, (u32)ts.tv_sec);
+                tsauxc = E1000_READ_REG(hw, E1000_TSAUXC);
+                tsauxc |= TSAUXC_EN_TT0;
+                E1000_WRITE_REG(hw, E1000_TSAUXC, tsauxc);
+                adapter->perout[0].start = ts;
+                spin_unlock(&adapter->tmreg_lock);
+                ack |= TSINTR_TT0;
+        }
+
+        if (tsicr & TSINTR_TT1) {
+                spin_lock(&adapter->tmreg_lock);
+                ts = timespec64_add(adapter->perout[1].start,
+                                    adapter->perout[1].period);
+                E1000_WRITE_REG(hw, E1000_TRGTTIML1, ts.tv_nsec);
+                E1000_WRITE_REG(hw, E1000_TRGTTIMH1, (u32)ts.tv_sec);
+                tsauxc = E1000_READ_REG(hw, E1000_TSAUXC);
+                tsauxc |= TSAUXC_EN_TT1;
+                E1000_WRITE_REG(hw, E1000_TSAUXC, tsauxc);
+                adapter->perout[1].start = ts;
+                spin_unlock(&adapter->tmreg_lock);
+                ack |= TSINTR_TT1;
+        }
+
+        if (tsicr & TSINTR_AUTT0) {
+                nsec = E1000_READ_REG(hw, E1000_AUXSTMPL0);
+                sec  = E1000_READ_REG(hw, E1000_AUXSTMPH0);
+                event.type = PTP_CLOCK_EXTTS;
+                event.index = 0;
+                event.timestamp = sec * 1000000000ULL + nsec;
+                ptp_clock_event(adapter->ptp_clock, &event);
+                ack |= TSINTR_AUTT0;
+        }
+
+        if (tsicr & TSINTR_AUTT1) {
+                nsec = E1000_READ_REG(hw, E1000_AUXSTMPL1);
+                sec  = E1000_READ_REG(hw, E1000_AUXSTMPH1);
+                event.type = PTP_CLOCK_EXTTS;
+                event.index = 1;
+                event.timestamp = sec * 1000000000ULL + nsec;
+                ptp_clock_event(adapter->ptp_clock, &event);
+                ack |= TSINTR_AUTT1;
+        }
+
+        /* acknowledge the interrupts */
+        E1000_WRITE_REG(hw, E1000_TSICR, ack);
+}
+
 static irqreturn_t igb_msix_other(int irq, void *data)
 {
 	struct igb_adapter *adapter = data;
@@ -9062,6 +9112,40 @@ static irqreturn_t igb_msix_other(int irq, void *data)
 			/* retrieve hardware timestamp */
 			igb_ptp_tx_work(&adapter->ptp_tx_work);
 		}
+
+                if(tsicr & E1000_TSICR_TT0) {
+                        /* enabled only on i350!
+                           acknowledge the interrupt */
+                        tsicr |= E1000_TSICR_TT0;
+                        /* process the pps event */
+                        if(hw->mac.type == e1000_i350) schedule_work(&adapter->ptp_pps_work);
+                        schedule_work(&adapter->ptp_fire_pps_event_work);
+                }
+
+                if(tsicr & E1000_TSICR_SYSWARP) {
+                        /* enabled only on i210!
+                         * acknowledge the interrupt */
+                        tsicr |= E1000_TSICR_SYSWARP;
+                        /* process the pps event */
+                        schedule_work(&adapter->ptp_fire_pps_event_work);
+                }
+
+                if(tsicr & E1000_TSICR_AUTT0) {
+                        /* acknowledge the interrupt */
+                        tsicr |= E1000_TSICR_AUTT0;
+                        /* process the external event */
+                        schedule_work(&adapter->ptp_extts0_work);
+                }
+
+                if(tsicr & E1000_TSICR_AUTT1) {
+                        /* acknowledge the interrupt */
+                        tsicr |= E1000_TSICR_AUTT1;
+                        /* process the external event */
+                        schedule_work(&adapter->ptp_extts1_work);
+                }
+                E1000_WRITE_REG(hw, E1000_TSICR, tsicr);
+
+                igb_tsync_interrupt(adapter);
 	}
 #endif /* HAVE_PTP_1588_CLOCK */
 
@@ -9858,6 +9942,40 @@ static irqreturn_t igb_intr_msi(int irq, void *data)
 			/* retrieve hardware timestamp */
 			igb_ptp_tx_work(&adapter->ptp_tx_work);
 		}
+
+                if(tsicr & E1000_TSICR_TT0) {
+                        /* acknowledge the interrupt */
+                        tsicr |= E1000_TSICR_TT0;
+                        /* process the pps event */
+                        schedule_work(&adapter->ptp_pps_work);
+                        schedule_work(&adapter->ptp_fire_pps_event_work);
+                }
+
+                if(tsicr & E1000_TSICR_SYSWARP) {
+                        /* enabled only on i210!
+                         * acknowledge the interrupt */
+                        tsicr |= E1000_TSICR_SYSWARP;
+                        /* process the pps event */
+                        schedule_work(&adapter->ptp_fire_pps_event_work);
+                }
+
+                if(tsicr & E1000_TSICR_AUTT0) {
+                        /* acknowledge the interrupt */
+                        tsicr |= E1000_TSICR_AUTT0;
+                        /* process the external event */
+                        schedule_work(&adapter->ptp_extts0_work);
+                }
+
+                if(tsicr & E1000_TSICR_AUTT1) {
+                        /* acknowledge the interrupt */
+                        tsicr |= E1000_TSICR_AUTT1;
+                        /* process the external event */
+                        schedule_work(&adapter->ptp_extts1_work);
+                }
+
+                E1000_WRITE_REG(hw, E1000_TSICR, tsicr);
+
+                igb_tsync_interrupt(adapter);
 	}
 #endif /* HAVE_PTP_1588_CLOCK */
 
@@ -9914,6 +10032,40 @@ static irqreturn_t igb_intr(int irq, void *data)
 			/* retrieve hardware timestamp */
 			igb_ptp_tx_work(&adapter->ptp_tx_work);
 		}
+
+		if(tsicr & E1000_TSICR_TT0) {
+                        /* acknowledge the interrupt */
+                        tsicr |= E1000_TSICR_TT0;
+                        /* process the pps event */
+                        schedule_work(&adapter->ptp_pps_work);
+                        schedule_work(&adapter->ptp_fire_pps_event_work);
+                }
+
+                if(tsicr & E1000_TSICR_SYSWARP) {
+                        /* enabled only on i210!
+                         * acknowledge the interrupt */
+                        tsicr |= E1000_TSICR_SYSWARP;
+                        /* process the pps event */
+                        schedule_work(&adapter->ptp_fire_pps_event_work);
+                }
+
+                if(tsicr & E1000_TSICR_AUTT0) {
+                        /* acknowledge the interrupt */
+                        tsicr |= E1000_TSICR_AUTT0;
+                        /* process the external event */
+                        schedule_work(&adapter->ptp_extts0_work);
+                }
+
+                if(tsicr & E1000_TSICR_AUTT1) {
+                        /* acknowledge the interrupt */
+                        tsicr |= E1000_TSICR_AUTT1;
+                        /* process the external event */
+                        schedule_work(&adapter->ptp_extts1_work);
+                }
+
+                E1000_WRITE_REG(hw, E1000_TSICR, tsicr);
+
+                igb_tsync_interrupt(adapter);
 	}
 #endif /* HAVE_PTP_1588_CLOCK */
 

@@ -36,6 +36,7 @@
 #define E1000_FCT	0x00030  /* Flow Control Type - RW */
 #define E1000_CONNSW	0x00034  /* Copper/Fiber switch control - RW */
 #define E1000_VET	0x00038  /* VLAN Ether Type - RW */
+#define E1000_TSSDP    0x0003C  /* Time Sync SDP Configuration Register - RW */
 #define E1000_ICR	0x000C0  /* Interrupt Cause Read - R/clr */
 #define E1000_ITR	0x000C4  /* Interrupt Throttling Rate - RW */
 #define E1000_ICS	0x000C8  /* Interrupt Cause Set - WO */
@@ -548,6 +549,34 @@
 #define E1000_SYSTIMR	0x0B6F8 /* System time register Residue */
 #define E1000_TSICR	0x0B66C /* Interrupt Cause Register */
 #define E1000_TSIM	0x0B674 /* Interrupt Mask Register */
+
+/* IEEE 1588 TIMESYNCH */
+#define E1000_TSYNCRXCTL 0x0B620 /* Rx Time Sync Control register - RW */
+#define E1000_TSYNCTXCTL 0x0B614 /* Tx Time Sync Control register - RW */
+#define E1000_TSYNCRXCFG 0x05F50 /* Time Sync Rx Configuration - RW */
+#define E1000_RXSTMPL    0x0B624 /* Rx timestamp Low - RO */
+#define E1000_RXSTMPH    0x0B628 /* Rx timestamp High - RO */
+#define E1000_RXSATRL    0x0B62C /* Rx timestamp attribute low - RO */
+#define E1000_RXSATRH    0x0B630 /* Rx timestamp attribute high - RO */
+#define E1000_TXSTMPL    0x0B618 /* Tx timestamp value Low - RO */
+#define E1000_TXSTMPH    0x0B61C /* Tx timestamp value High - RO */
+#define E1000_SYSTIML    0x0B600 /* System time register Low - RO */
+#define E1000_SYSTIMH    0x0B604 /* System time register High - RO */
+#define E1000_TIMINCA    0x0B608 /* Increment attributes register - RW */
+#define E1000_TSAUXC     0x0B640 /* Timesync Auxiliary Control register */
+#define E1000_TRGTTIML0  0x0B644 /* Target Time Register 0 Low  - RW */
+#define E1000_TRGTTIMH0  0x0B648 /* Target Time Register 0 High - RW */
+#define E1000_TRGTTIML1  0x0B64C /* Target Time Register 1 Low  - RW */
+#define E1000_TRGTTIMH1  0x0B650 /* Target Time Register 1 High - RW */
+#define E1000_FREQOUT0   0x0B654 /* Frequency Out 0 Control Register - RW */
+#define E1000_FREQOUT1   0x0B658 /* Frequency Out 1 Control Register - RW */
+#define E1000_AUXSTMPL0  0x0B65C /* Auxiliary Time Stamp 0 Register Low  - RO */
+#define E1000_AUXSTMPH0  0x0B660 /* Auxiliary Time Stamp 0 Register High - RO */
+#define E1000_AUXSTMPL1  0x0B664 /* Auxiliary Time Stamp 1 Register Low  - RO */
+#define E1000_AUXSTMPH1  0x0B668 /* Auxiliary Time Stamp 1 Register High - RO */
+#define E1000_SYSTIMR    0x0B6F8 /* System time register Residue */
+#define E1000_TSICR      0x0B66C /* Interrupt Cause Register */
+#define E1000_TSIM       0x0B674 /* Interrupt Mask Register */
 
 /* Filtering Registers */
 #define E1000_SAQF(_n)	(0x05980 + (4 * (_n))) /* Source Address Queue Fltr */

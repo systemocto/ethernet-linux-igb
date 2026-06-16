@@ -522,6 +522,10 @@ enum igb_filter_match_flags {
 
 #define IGB_MAX_RXNFC_FILTERS 16
 
+#define IGB_N_EXTTS     2
+#define IGB_N_PEROUT    2
+#define IGB_N_SDP       4
+
 /* RX network flow classification data structure */
 struct igb_nfc_input {
 	/* Byte layout in order, all values with MSB first:
@@ -595,6 +599,14 @@ struct igb_adapter {
 	/* Interrupt Throttle Rate */
 	u32 rx_itr_setting;
 	u32 tx_itr_setting;
+
+        struct work_struct ptp_pps_work;
+        struct work_struct ptp_extts1_work;
+        struct work_struct ptp_extts0_work;
+        struct work_struct ptp_fire_pps_event_work;
+        u64 ptp_pps_start;
+        u32 pps_delay;
+        bool doubleedge;
 
 	struct work_struct reset_task;
 	struct work_struct watchdog_task;
@@ -678,6 +690,14 @@ struct igb_adapter {
 #endif /* IGB_HWMON */
 	u32 etrack_id;
 
+        bool pps_sys_wrap_on;
+
+        struct ptp_pin_desc sdp_config[IGB_N_SDP];
+        struct {
+                struct timespec64 start;
+                struct timespec64 period;
+        } perout[IGB_N_PEROUT];
+
 #ifdef HAVE_PTP_1588_CLOCK
 	struct ptp_clock *ptp_clock;
 	struct ptp_clock_info ptp_caps;
@@ -694,9 +714,6 @@ struct igb_adapter {
 	u32 tx_hwtstamp_timeouts;
 	u32 rx_hwtstamp_cleared;
 
-        u64 ptp_pps_start;
-        u32 pps_delay;
-        bool doubleedge;
 #endif /* HAVE_PTP_1588_CLOCK */
 
 #ifdef HAVE_I2C_SUPPORT
@@ -904,6 +921,9 @@ enum host_cmd_id_status {
 
 extern char igb_driver_name[];
 extern char igb_driver_version[];
+
+extern void igb_ptp_fire_pps_event_work(struct work_struct *work);
+extern void igb_ptp_pps_work(struct work_struct *work);
 
 void igb_led_set(struct igb_adapter *adapter, int led, u16 brightness);
 enum led_brightness igb_led_get(struct igb_adapter *adapter, int led);

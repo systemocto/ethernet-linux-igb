@@ -569,6 +569,384 @@ static int igb_ptp_enable(struct ptp_clock_info *ptp,
 }
 
 /**
+ * igb_ptp_extts_work_i210
+ * @work: pointer to work struct
+ *
+ * This work function resets the PPS output registers.
+ */
+void igb_ptp_extts0_work_i210(struct work_struct *work)
+{
+        struct igb_adapter * adapter = container_of(work, struct igb_adapter, ptp_extts0_work);
+        struct e1000_hw *hw = &adapter->hw;
+        struct ptp_clock_event event;
+        u32 regval = E1000_READ_REG(hw, E1000_CTRL);
+        /* prepare external stamp event */
+        event.timestamp = E1000_READ_REG(hw, E1000_AUXSTMPL0);
+        event.timestamp += E1000_READ_REG(hw, E1000_AUXSTMPH0) * NSEC_PER_SEC;
+
+        // skip falling edge
+        if(!adapter->doubleedge && !(regval & E1000_TS_SDP0_DATA)) {
+                return;
+        }
+        event.type = PTP_CLOCK_EXTTS;
+        event.index = 0;
+        /* fire event */
+        ptp_clock_event(adapter->ptp_clock, &event);
+}
+
+void igb_ptp_extts1_work_i210(struct work_struct *work)
+{
+        struct igb_adapter * adapter = container_of(work, struct igb_adapter, ptp_extts1_work);
+        struct e1000_hw *hw = &adapter->hw;
+        struct ptp_clock_event event;
+        u32 regval = E1000_READ_REG(hw, E1000_CTRL_EXT);
+        /* prepare external stamp event */
+        event.timestamp = E1000_READ_REG(hw, E1000_AUXSTMPL1);
+        event.timestamp += E1000_READ_REG(hw, E1000_AUXSTMPH1) * NSEC_PER_SEC;
+
+        // skip falling edge
+//      if(!(regval & E1000_TS_SDP3_DATA)) {
+        if(!adapter->doubleedge && !(regval & E1000_TS_SDP1_DATA)) {
+                return;
+        }
+        event.type = PTP_CLOCK_EXTTS;
+        event.index = 1;
+        /* fire event */
+        ptp_clock_event(adapter->ptp_clock, &event);
+}
+
+/**
+ * igb_ptp_fire_pps_event_i210
+ * @work: pointer to work struct
+ *
+ * This work function resets the PPS output registers.
+ */
+void igb_ptp_fire_pps_event_i210(struct work_struct *work)
+{
+        struct igb_adapter * adapter = container_of(work, struct igb_adapter, ptp_fire_pps_event_work);
+        struct ptp_clock_event event;
+        struct timespec64 ts;
+
+        adapter->ptp_caps.gettime64(&adapter->ptp_caps, &ts);
+        event.type = PTP_CLOCK_PPS;
+        event.index = 0;
+        event.timestamp = timespec64_to_ns(&ts);
+        /* fire PPS event */
+        ptp_clock_event(adapter->ptp_clock, &event);
+}
+
+static void igb_ptp_switch_extts(struct ptp_clock_info *ptp,
+                struct ptp_clock_request *rq, int on)
+{
+        struct igb_adapter * adapter = container_of(ptp, struct igb_adapter, ptp_caps);
+        struct e1000_hw * hw = &adapter->hw;
+        u32 regval;
+        switch(rq->extts.index) {
+        case 0:
+                if(rq->extts.flags & PTP_ENABLE_FEATURE) {
+                        // 1
+                        regval = E1000_READ_REG(hw, E1000_TSSDP);
+                        regval |= E1000_TS_SDP_AUX0(0) | E1000_TS_SDP_AUX0_EN;
+                        E1000_WRITE_REG(hw, E1000_TSSDP, regval);
+                        // 2
+                        regval = E1000_READ_REG(hw, E1000_CTRL);
+                        regval &= ~( E1000_TS_SDP0_DIR );
+                        E1000_WRITE_REG(hw, E1000_CTRL, regval);
+                        E1000_WRITE_FLUSH(hw);
+                        // 3
+                        regval = E1000_READ_REG(hw, E1000_TSAUXC);
+                        regval |= (E1000_TSAUXC_EN_TS0);
+                        E1000_WRITE_REG(hw, E1000_TSAUXC, regval);
+
+                        // enable interrupts
+                        regval = E1000_READ_REG(hw, E1000_TSIM);
+                        regval |= (E1000_TSIM_AUTT0);
+                        E1000_WRITE_REG(hw, E1000_TSIM, regval);
+                        E1000_WRITE_FLUSH(hw);
+                }
+                else {
+                        regval = E1000_READ_REG(hw, E1000_TSSDP);
+                        regval &= ~(E1000_TS_SDP_AUX0_EN);
+                        E1000_WRITE_REG(hw, E1000_TSSDP, regval);
+
+                        regval = E1000_READ_REG(hw, E1000_TSAUXC);
+                        regval &= ~(E1000_TSAUXC_EN_TS0);
+                        E1000_WRITE_REG(hw, E1000_TSAUXC, regval);
+
+                        regval = E1000_READ_REG(hw, E1000_TSIM);
+                        regval &= ~(E1000_TSIM_AUTT0);
+                        E1000_WRITE_REG(hw, E1000_TSIM, regval);
+
+                        E1000_WRITE_FLUSH(hw);
+                }
+                break;
+        case 1:
+                if(rq->extts.flags & PTP_ENABLE_FEATURE) {
+                        // 1
+                        regval = E1000_READ_REG(hw, E1000_TSSDP);
+//                      regval |= E1000_TS_SDP_AUX1(3) | E1000_TS_SDP_AUX1_EN;
+                        regval |= E1000_TS_SDP_AUX1(1) | E1000_TS_SDP_AUX1_EN;
+                        E1000_WRITE_REG(hw, E1000_TSSDP, regval);
+                        // 2
+//                      regval = E1000_READ_REG(hw, E1000_CTRL_EXT);
+                        regval = E1000_READ_REG(hw, E1000_CTRL);
+//                      regval &= ~( E1000_TS_SDP3_DIR );
+                        regval &= ~( E1000_TS_SDP1_DIR );
+//                      E1000_WRITE_REG(hw, E1000_CTRL_EXT, regval);
+                        E1000_WRITE_REG(hw, E1000_CTRL, regval);
+                        E1000_WRITE_FLUSH(hw);
+                        // 3
+                        regval = E1000_READ_REG(hw, E1000_TSAUXC);
+                        regval |= (E1000_TSAUXC_EN_TS1);
+                        E1000_WRITE_REG(hw, E1000_TSAUXC, regval);
+
+                        // enable interrupts
+                        regval = E1000_READ_REG(hw, E1000_TSIM);
+                        regval |= (E1000_TSIM_AUTT1);
+                        E1000_WRITE_REG(hw, E1000_TSIM, regval);
+                        E1000_WRITE_FLUSH(hw);
+                }
+                else {
+                        regval = E1000_READ_REG(hw, E1000_TSSDP);
+                        regval &= ~(E1000_TS_SDP_AUX1_EN);
+                        E1000_WRITE_REG(hw, E1000_TSSDP, regval);
+
+                        regval = E1000_READ_REG(hw, E1000_TSAUXC);
+                        regval &= ~(E1000_TSAUXC_EN_TS1);
+                        E1000_WRITE_REG(hw, E1000_TSAUXC, regval);
+
+                        regval = E1000_READ_REG(hw, E1000_TSIM);
+                        regval &= ~(E1000_TSIM_AUTT1);
+                        E1000_WRITE_REG(hw, E1000_TSIM, regval);
+
+                        E1000_WRITE_FLUSH(hw);
+                }
+                break;
+        default: break;
+        }
+}
+
+static int igb_ptp_enable_i210(struct ptp_clock_info *ptp,
+                struct ptp_clock_request *rq, int on)
+{
+        struct igb_adapter * adapter = container_of(ptp, struct igb_adapter, ptp_caps);
+        struct e1000_hw * hw = &adapter->hw;
+        u32 regval;
+//      struct timespec ts;
+        struct timespec64 ts;
+
+        switch(rq->type) {
+
+                case PTP_CLK_REQ_EXTTS:
+                        igb_ptp_switch_extts(ptp, rq, on);
+//4sep2019
+                        printk("%s (%d) Timestamping on channel %d %s %s\n",__FUNCTION__,__LINE__, rq->extts.index, adapter->netdev->name,(rq->extts.flags&PTP_ENABLE_FEATURE)?"enabled":"disabled");
+                break;
+                case PTP_CLK_REQ_PEROUT:
+
+                        /* If the period length is zero, disable the output and return */
+                        if(!rq->perout.period.nsec) {
+                                regval = E1000_READ_REG(hw, E1000_TSAUXC);
+                                regval &= ~E1000_TSAUXC_EN_CLK0;
+                                E1000_WRITE_REG(hw, E1000_TSAUXC, regval);
+
+                                regval = E1000_READ_REG(hw, E1000_TSSDP);
+                                regval &= ~E1000_TS_SDP1_EN;
+                                E1000_WRITE_REG(hw, E1000_TSSDP, regval);
+                                E1000_WRITE_FLUSH(hw);
+
+                                printk("%s (%d) Periodic output on %s SDP1 disabled\n",__FUNCTION__,__LINE__,adapter->netdev->name);
+                                return 0;
+                        }
+                        regval = rq->perout.period.nsec / 2;
+                        if(regval > 70000000 && (regval != NSEC_PER_SEC/2
+                                        || regval != NSEC_PER_SEC/4 || regval != NSEC_PER_SEC/8) ) {
+                                printk("%s (%d) Invalid period length specified! Refer 8.15.18 for valid settings.\n", __FUNCTION__, __LINE__);
+                                return -EINVAL;
+                        }
+                        E1000_WRITE_REG(hw, E1000_FREQOUT0, regval);
+                        printk("%s (%d) Periodic output on %s SDP1 (T = %dns)\n",__FUNCTION__,__LINE__, adapter->netdev->name, regval);
+                        E1000_WRITE_FLUSH(hw);
+
+                        /* Map SDP1 to FREQOUT0 */
+                        regval = E1000_READ_REG(hw, E1000_TSSDP);
+                        regval |= E1000_TS_SDP1_SEL(2) | E1000_TS_SDP1_EN;
+                        E1000_WRITE_REG(hw, E1000_TSSDP, regval);
+                        /* Set SDP1 to output */
+                        regval = E1000_READ_REG(hw, E1000_CTRL);
+                        regval |= ( E1000_TS_SDP1_DIR );
+                        E1000_WRITE_REG(hw, E1000_CTRL, regval);
+                        /* SDP2-3 enabling is different
+                           regval = E1000_READ_REG(hw, E1000_CTRL_EXT);
+                           regval |= ( E1000_TS_SDP2_DIR(1) );
+                           E1000_WRITE_REG(hw, E1000_CTRL_EXT, regval);
+                         */
+                        E1000_WRITE_FLUSH(hw);
+
+                        /* Align the first rising edge to the start of the
+                         * next second
+                         */
+                        ptp->gettime64(ptp,&ts);
+                        ts.tv_nsec = NSEC_PER_SEC / 2;
+                        ts.tv_sec += 1;
+                        E1000_WRITE_REG(hw, E1000_TRGTTIML0, ts.tv_nsec);
+                        E1000_WRITE_REG(hw, E1000_TRGTTIMH0, ts.tv_sec);
+                        E1000_WRITE_FLUSH(hw);
+
+                        /*Enable FREQOUT0 */
+                        regval = E1000_READ_REG(hw, E1000_TSAUXC);
+                        regval |= E1000_TSAUXC_EN_CLK0 | E1000_TSAUXC_ST0 | E1000_TSAUXC_EN_TT0;
+                        E1000_WRITE_REG(hw, E1000_TSAUXC, regval); 
+                        E1000_WRITE_FLUSH(hw);
+
+                        break;
+
+                case PTP_CLK_REQ_PPS:
+
+                        printk("%s (%d): PPS %s on %s SDP1\n",__FUNCTION__,__LINE__,on?"enabled":"disabled", adapter->netdev->name);
+
+                        if(on) {
+                                E1000_WRITE_REG(hw, E1000_FREQOUT0, (NSEC_PER_SEC / 2));
+                                E1000_WRITE_FLUSH(hw);
+
+                                /* Map SDP1 to FREQOUT0 */
+                                regval = E1000_READ_REG(hw, E1000_TSSDP);
+                                regval |= E1000_TS_SDP1_SEL(2) | E1000_TS_SDP1_EN;
+                                E1000_WRITE_REG(hw, E1000_TSSDP, regval);
+                                /* Set SDP1 to output */
+                                regval = E1000_READ_REG(hw, E1000_CTRL);
+                                regval |= ( E1000_TS_SDP1_DIR );
+                                E1000_WRITE_REG(hw, E1000_CTRL, regval);
+                                /* SDP2-3 enabling is different
+                                   regval = E1000_READ_REG(hw, E1000_CTRL_EXT);
+                                   regval |= ( E1000_TS_SDP2_DIR(1) );
+                                   E1000_WRITE_REG(hw, E1000_CTRL_EXT, regval);
+                                 */
+                                E1000_WRITE_FLUSH(hw);
+
+                                /* Align the first rising edge to the start of the
+                                 * next second
+                                 */
+                                ptp->gettime64(ptp,&ts);
+                                ts.tv_nsec = (NSEC_PER_SEC / 2);
+                                ts.tv_sec += 1;
+                                E1000_WRITE_REG(hw, E1000_TRGTTIML0, ts.tv_nsec);
+                                E1000_WRITE_REG(hw, E1000_TRGTTIMH0, ts.tv_sec);
+                                E1000_WRITE_FLUSH(hw);
+
+                                /* enable interrupts */
+                                regval = E1000_READ_REG(hw, E1000_TSIM);
+                                regval |= (E1000_TSIM_SYSWARP);
+                                E1000_WRITE_REG(hw, E1000_TSIM, regval);
+                                E1000_WRITE_FLUSH(hw);
+
+                                /*Enable FREQOUT0 */
+                                regval = E1000_READ_REG(hw, E1000_TSAUXC);
+                                regval |= (E1000_TSAUXC_EN_CLK0 | E1000_TSAUXC_ST0 | E1000_TSAUXC_EN_TT0);
+                                E1000_WRITE_REG(hw, E1000_TSAUXC, regval);
+                                E1000_WRITE_FLUSH(hw);
+                        }
+                        else {
+                                regval = E1000_READ_REG(hw, E1000_TSAUXC);
+                                regval &= ~E1000_TSAUXC_EN_CLK0;
+                                E1000_WRITE_REG(hw, E1000_TSAUXC, regval);
+
+                                regval = E1000_READ_REG(hw, E1000_TSIM);
+                                regval &= ~E1000_TSIM_TT0;
+                                E1000_WRITE_REG(hw, E1000_TSIM, regval);
+
+                                regval = E1000_READ_REG(hw, E1000_TSSDP);
+                                regval &= ~E1000_TS_SDP1_EN;
+                                E1000_WRITE_REG(hw, E1000_TSSDP, regval);
+                                E1000_WRITE_FLUSH(hw);
+                        }
+                        break;
+
+                default: return -EOPNOTSUPP;
+
+        }
+
+        return 0;
+}
+
+static void igb_pin_direction(int pin, int input, u32 *ctrl, u32 *ctrl_ext)
+{
+        u32 *ptr = pin < 2 ? ctrl : ctrl_ext;
+        static const u32 mask[IGB_N_SDP] = {
+                E1000_CTRL_SDP0_DIR,
+                E1000_CTRL_SDP1_DIR,
+                E1000_CTRL_EXT_SDP2_DIR,
+                E1000_CTRL_EXT_SDP3_DIR,
+        };
+
+        if (input)
+                *ptr &= ~mask[pin];
+        else
+                *ptr |= mask[pin];
+}
+
+/*
+static void igb_pin_extts(struct igb_adapter *igb, int chan, int pin)
+{
+        static const u32 aux0_sel_sdp[IGB_N_SDP] = {
+                AUX0_SEL_SDP0, AUX0_SEL_SDP1, AUX0_SEL_SDP2, AUX0_SEL_SDP3,
+        };
+        static const u32 aux1_sel_sdp[IGB_N_SDP] = {
+                AUX1_SEL_SDP0, AUX1_SEL_SDP1, AUX1_SEL_SDP2, AUX1_SEL_SDP3,
+        };
+        static const u32 ts_sdp_en[IGB_N_SDP] = {
+                TS_SDP0_EN, TS_SDP1_EN, TS_SDP2_EN, TS_SDP3_EN,
+        };
+        struct e1000_hw *hw = &igb->hw;
+        u32 ctrl, ctrl_ext, tssdp = 0;
+
+        ctrl = E1000_READ_REG(hw, E1000_CTRL);
+        ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
+        tssdp = E1000_READ_REG(hw, E1000_TSSDP);
+
+        igb_pin_direction(pin, 1, &ctrl, &ctrl_ext);
+
+        // Make sure this pin is not enabled as an output.
+        tssdp &= ~ts_sdp_en[pin];
+
+        if (chan == 1) {
+                tssdp &= ~AUX1_SEL_SDP3;
+                tssdp |= aux1_sel_sdp[pin] | AUX1_TS_SDP_EN;
+        } else {
+                tssdp &= ~AUX0_SEL_SDP3;
+                tssdp |= aux0_sel_sdp[pin] | AUX0_TS_SDP_EN;
+        }
+
+        E1000_WRITE_REG(hw, E1000_TSSDP, tssdp);
+        E1000_WRITE_REG(hw, E1000_CTRL, ctrl);
+        E1000_WRITE_REG(hw, E1000_CTRL_EXT, ctrl_ext);
+}
+
+static int igb_ptp_feature_enable(struct ptp_clock_info *ptp,
+                                  struct ptp_clock_request *rq, int on)
+{
+        return -EOPNOTSUPP;
+}
+*/
+
+static int igb_ptp_verify_pin(struct ptp_clock_info *ptp, unsigned int pin,
+                              enum ptp_pin_function func, unsigned int chan)
+{
+        switch (func) {
+        case PTP_PF_NONE:
+        case PTP_PF_EXTTS:
+        case PTP_PF_PEROUT:
+                break;
+        case PTP_PF_PHYSYNC:
+                return -1;
+        }
+        return 0;
+}
+
+
+
+
+/**
  *  igb_ptp_tx_work
  *  @work: pointer to work struct
  *
@@ -962,6 +1340,7 @@ void igb_ptp_init(struct igb_adapter *adapter)
 {
 	struct e1000_hw *hw = &adapter->hw;
 	struct net_device *netdev = adapter->netdev;
+	int i;
 
 	switch (hw->mac.type) {
 	case e1000_82576:
@@ -1023,11 +1402,22 @@ void igb_ptp_init(struct igb_adapter *adapter)
 		break;
 	case e1000_i210:
 	case e1000_i211:
+                for (i = 0; i < IGB_N_SDP; i++) {
+                        struct ptp_pin_desc *ppd = &adapter->sdp_config[i];
+
+                        snprintf(ppd->name, sizeof(ppd->name), "SDP%d", i);
+                        ppd->index = i;
+                        ppd->func = PTP_PF_NONE;
+                }
 		snprintf(adapter->ptp_caps.name, 16, "%pm", netdev->dev_addr);
 		adapter->ptp_caps.owner = THIS_MODULE;
 		adapter->ptp_caps.max_adj = 62499999;
-		adapter->ptp_caps.n_ext_ts = 0;
-		adapter->ptp_caps.pps = 0;
+		adapter->ptp_caps.pps = 1;
+                adapter->ptp_caps.n_ext_ts = IGB_N_EXTTS;
+                adapter->ptp_caps.n_per_out = IGB_N_PEROUT;
+                adapter->ptp_caps.n_pins = IGB_N_SDP;
+                adapter->ptp_caps.pin_config = adapter->sdp_config;
+
 #ifdef HAVE_PTP_CLOCK_INFO_ADJFINE
 		adapter->ptp_caps.adjfine = igb_ptp_adjfine_82580;
 #else
@@ -1042,8 +1432,13 @@ void igb_ptp_init(struct igb_adapter *adapter)
 		adapter->ptp_caps.settime = igb_ptp_settime32_i210;
 #endif
 		adapter->ptp_caps.enable = igb_ptp_enable;
+                adapter->ptp_caps.enable = igb_ptp_enable_i210;
+                adapter->ptp_caps.verify = igb_ptp_verify_pin;
 		/* Enable the timer functions by clearing bit 31. */
 		E1000_WRITE_REG(hw, E1000_TSAUXC, 0x0);
+                INIT_WORK(&adapter->ptp_extts0_work, igb_ptp_extts0_work_i210);
+                INIT_WORK(&adapter->ptp_extts1_work, igb_ptp_extts1_work_i210);
+                INIT_WORK(&adapter->ptp_fire_pps_event_work, igb_ptp_fire_pps_event_i210);
 		break;
 	default:
 		adapter->ptp_clock = NULL;
