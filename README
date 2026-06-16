@@ -6,9 +6,9 @@ added features:
 - calibration values stored in eeprom
 - timestamping SDP pin feature
 
-![Screenshot of htop](docs/images/24097-1.jpg?raw=true)
-![Screenshot of htop](docs/images/chrony-sources-stats.jpg?raw=true)
-![Screenshot of htop](docs/images/DPLL-holdover.jpg?raw=true)
+![board2409-7 picture](docs/images/24097-1.jpg?raw=true)
+![chrony stats](docs/images/chrony-sources-stats.jpg?raw=true)
+![holdover](docs/images/DPLL-holdover.jpg?raw=true)
 
 igb Linux* Base Driver for Intel(R) Ethernet Network Connection
 ***************************************************************
