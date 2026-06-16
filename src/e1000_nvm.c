@@ -735,6 +735,116 @@ s32 e1000_read_pba_length_generic(struct e1000_hw *hw, u32 *pba_num_size)
 }
 
 /**
+ *  igb_read_xtalcal3 - Read device xtal calibration
+ *  @hw: pointer to the HW structure
+ *  @part_xtalcal: oscillator frequency offset
+ *  @part_oscillatortype: oscillator type. ff=unknown, 0=xtal, 1=tcxo, 2=ocxo
+ *
+ *  Reads the product oscillator frequency offset from the EEPROM and stores
+ *  the value in part_xtalcal.
+ **/
+s32 igb_read_part_xtalcal3(struct e1000_hw *hw, s32 *part_xtalcal, u32 *part_oscillatortype, u32 *part_boardfeatures)
+{
+        s32 ret_val;
+        u16 nvm_datah, nvm_datal, nvm_osctype, nvm_boardfeat;
+
+        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALH, 1, &nvm_datah);
+        if (ret_val) {
+                DEBUGFUNC("NVM Read Error\n");
+                goto out;
+        }
+
+        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALL, 1, &nvm_datal);
+        if (ret_val) {
+                DEBUGFUNC("NVM Read Error\n");
+                goto out;
+        }
+        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALL + 1, 1, &nvm_osctype);
+        if (ret_val) {
+                DEBUGFUNC("NVM Read Error\n");
+                goto out;
+        }
+
+        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALL + 1, 1, &nvm_boardfeat);
+        if (ret_val) {
+                DEBUGFUNC("NVM Read Error\n");
+                goto out;
+        }
+
+        if (nvm_datah == 0xFFFF && nvm_datal == 0xFFFF && nvm_osctype == 0xFFFF) {
+                DEBUGFUNC("NVM xtalcal invalid\n");
+                ret_val = E1000_ERR_NVM_PBA_SECTION;
+//                goto out;
+        }
+
+        part_oscillatortype[0] = nvm_osctype & 0x00ff;
+        part_boardfeatures[0] = (nvm_boardfeat & 0xff00 ) >> 8;
+        part_xtalcal[0] = nvm_datal + (nvm_datah << 16);
+
+out:
+        return ret_val;
+}
+
+/**
+ *  igb_read_xtalcal4 - Read device xtal calibration
+ *  @hw: pointer to the HW structure
+ *  @part_xtalcal: oscillator frequency offset
+ *  @part_oscillatortype: oscillator type. ff=unknown, 0=xtal, 1=tcxo, 2=ocxo
+ *  @part_boardfeatures: DAC2,DPLL,CDCE813,GPI2,WDT
+ *
+ *  Reads the product oscillator frequency offset from the EEPROM and stores
+ *  the value in part_xtalcal.
+ **/
+s32 igb_read_part_xtalcal4(struct e1000_hw *hw, s32 *part_xtalcal, u32 *part_oscillatortype, u32 *part_boardfeatures)
+{
+        s32 ret_val;
+        u16 nvm_datah, nvm_datal, nvm_osctype, nvm_boardfeat, nvm_boardfeat2;
+
+        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALH, 1, &nvm_datah);
+        if (ret_val) {
+                DEBUGFUNC("NVM Read Error\n");
+                goto out;
+        }
+
+        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALL, 1, &nvm_datal);
+        if (ret_val) {
+                DEBUGFUNC("NVM Read Error\n");
+                goto out;
+        }
+        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALL + 1, 1, &nvm_osctype);
+        if (ret_val) {
+                DEBUGFUNC("NVM Read Error\n");
+                goto out;
+        }
+
+        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALL + 1, 1, &nvm_boardfeat);
+        if (ret_val) {
+                DEBUGFUNC("NVM Read Error\n");
+                goto out;
+        }
+
+        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALL + 2, 1, &nvm_boardfeat2);
+        if (ret_val) {
+                DEBUGFUNC("NVM Read Error\n");
+                goto out;
+        }
+
+        if (nvm_datah == 0xFFFF && nvm_datal == 0xFFFF && nvm_osctype == 0xFFFF) {
+                DEBUGFUNC("NVM xtalcal invalid\n");
+                ret_val = E1000_ERR_NVM_PBA_SECTION;
+//                goto out;
+        }
+
+        part_oscillatortype[0] = nvm_osctype & 0x00ff;
+        part_boardfeatures[0] = (nvm_boardfeat & 0xff00 ) >> 8;
+        part_boardfeatures[0] += nvm_boardfeat2 & 0x00ff << 8;
+        part_xtalcal[0] = nvm_datal + (nvm_datah << 16);
+
+out:
+        return ret_val;
+}
+
+/**
  *  e1000_read_mac_addr_generic - Read device MAC address
  *  @hw: pointer to the HW structure
  *

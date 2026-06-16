@@ -85,13 +85,17 @@ endif
 # cflags given on the command line.
 devkernelbuild = $(call kernelbuild,$(if $(filter -DNO_PTP_SUPPORT,${EXTRA_CFLAGS}),CONFIG_PTP_1588_CLOCK=n) ${2},${1})
 
+
 ###############
 # Build rules #
 ###############
+KERNELDIR ?= /mnt/data/development/buildroot-2019.02.2/output/build/linux-4.19.36
 
 # Standard compilation, with regular output
 default:
-	@+$(call devkernelbuild,modules)
+#	@+$(call devkernelbuild,modules)
+	@+$(call devkernelbuild,-C $(KERNELDIR) M=$(PWD) modules)
+#make MYPWD=$(PWD) -C $(KERNELDIR) M=$(PWD) modules
 
 # Noisy output, for extra debugging
 noisy:

@@ -271,12 +271,14 @@ static int igb_ptp_adjfreq_82576(struct ptp_clock_info *ptp, s32 ppb)
  */
 static int igb_ptp_adjfine_82580(struct ptp_clock_info *ptp, long scaled_ppm)
 {
+        struct igb_adapter *adapter = container_of(ptp, struct igb_adapter, ptp_caps);
 	struct igb_adapter *igb = container_of(ptp, struct igb_adapter,
 					       ptp_caps);
 	struct e1000_hw *hw = &igb->hw;
 	bool neg_adj;
 	u64 rate;
 	u32 inca;
+        int dco_step_l = 0;
 
 	neg_adj = diff_by_scaled_ppm(IGB_82580_BASE_PERIOD, scaled_ppm, &rate);
 
@@ -298,6 +300,83 @@ static int igb_ptp_adjfine_82580(struct ptp_clock_info *ptp, long scaled_ppm)
 		inca |= ISGN;
 
 	E1000_WRITE_REG(hw, E1000_TIMINCA, inca);
+
+//octo
+                                                                                                        
+        if(adapter->i2c_pca9557_19) {
+                //u8 lmkreg[512];
+//              u32 ledctl2;
+                //u16 lmkregi;
+                //u8 res;
+//              ledctl2 = adapter->ledctl2;
+
+        }
+
+//nolmk:
+
+        if(adapter->i2c_dipsw) {
+                u32 ledctl;
+                ledctl = adapter->ledctl;
+//              ledctl |= (adapter->xtalcal > (s32) inca) ? 0x04 : 0x08;
+//              ledctl &= ~((adapter->xtalcal > (s32) inca) ? 0x08 : 0x04);
+//              ledctl &= ~((adapter->xtalcal == (s32) inca) ? 0x0c : 0x00);
+                ledctl |= neg_adj ? 0x04 : 0x08;
+                ledctl &= ~(neg_adj ? 0x08 : 0x04);
+                adapter->ledctl = ledctl;
+
+//              if( adapter->xtalcal > (s32) inca ) adapter->dco_inc = 1; else adapter->dco_inc = 0;
+//              if( adapter->xtalcal < (s32) inca ) adapter->dco_dec = 1; else adapter->dco_dec = 0;
+
+//              adapter->xtalcal = (s32) inca;
+
+
+
+                if(adapter->i2c_dipsw->addr == 0x20)
+                        i2c_smbus_write_byte(adapter->i2c_dipsw, ~ledctl);
+                if(adapter->i2c_dipsw->addr == 0x18)
+                        i2c_smbus_write_byte_data(adapter->i2c_dipsw, 1, ~ledctl & 0x0f);
+
+                ledctl &= ~(0x0c);
+                if(adapter->i2c_dipsw->addr == 0x20)
+                        i2c_smbus_write_byte(adapter->i2c_dipsw, ~ledctl);
+                if(adapter->i2c_dipsw->addr == 0x18)
+                        i2c_smbus_write_byte_data(adapter->i2c_dipsw, 1, ~ledctl & 0x0f);
+
+
+        }
+                                                                                                        
+        if(adapter->i2c_lmk05318b) {
+                if( dco_step_l != adapter->dco_step ) {
+                        dco_step_l = adapter->dco_step;
+
+//                      i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5b | ((( adapter->dco_step >> 32) & 0x1f) << 8)); //DPLL_FDEV_37:32 & 0x1f
+//                      i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5c | ((( adapter->dco_step >> 24) & 0xff) << 8)); //DPLL_FDEV_31:24
+//                      i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5d | ((( adapter->dco_step >> 16) & 0xff) << 8)); //DPLL_FDEV_23:16
+//                      i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5e | ((( adapter->dco_step >>  8) & 0xff) << 8)); //DPLL_FDEV_15:8
+//                      i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5f | ((( adapter->dco_step >>  0) & 0xff) << 8)); //DPLL_FDEV
+
+//                      i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5b | ((( adapter->dco_step >> 16) & 0x1f) << 8)); //DPLL_FDEV_37:32 & 0x1f
+//                      i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5c | ((( adapter->dco_step >> 8) & 0xff) << 8)); //DPLL_FDEV_31:24
+//                      i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5d | ((( adapter->dco_step >> 0) & 0xff) << 8)); //DPLL_FDEV_23:16
+
+//                      if( adapter->dco_step ) i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5f | ( 0x01 << 8)); //DPLL_FDEV_EN = 1
+//                      else i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5f | ( 0x00 << 8)); //DPLL_FDEV_EN = 0
+                }
+
+                if( adapter->dco_step ) {
+                        if(!neg_adj) i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x60 | (0x00 << 8)); //DPLL_FDEV_REG_UPDATE increment
+                        else i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x60 | (0x01 << 8)); //DPLL_FDEV_REG_UPDATE decrement
+                }
+
+
+
+//              i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x60 | (0x00 << 8)); //DPLL_FDEV_REG_UPDATE increment
+//              i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x60 | (0x01 << 8)); //DPLL_FDEV_REG_UPDATE decrement
+        } else {
+//		E1000_WRITE_REG(hw, E1000_TIMINCA, inca);
+        }
+
+
 
 	return 0;
 }
@@ -1011,6 +1090,7 @@ void igb_ptp_init(struct igb_adapter *adapter)
 			 adapter->netdev->name);
 		adapter->flags |= IGB_FLAG_PTP;
 	}
+        printk("%s (%d): PPS compensation offset: %d ns\n",__FUNCTION__,__LINE__,adapter->pps_delay);
 }
 
 /**

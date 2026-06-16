@@ -1,8 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Copyright(c) 2007 - 2026 Intel Corporation. */
 
-#include "igb.h"
-
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/init.h>
@@ -29,9 +27,41 @@
 #endif /* CONFIG_PM_RUNTIME */
 
 #include <linux/if_bridge.h>
+#include "igb.h"
 #include "igb_vmdq.h"
 
+#ifndef HAVE_I2C_SUPPORT
+#define HAVE_I2C_SUPPORT
+#endif
+#include <linux/i2c.h>
+#include <linux/bcd.h>
+#include <linux/firmware.h>
+#include "tmp102.h"
+//#include <cstdint>
+//#include <stdint.h>
+#undef HAVE_FDB_OPS
+#undef HAVE_NDO_FEATURES_CHECK
+#undef ETHTOOL_SEEE
+
+//#include "kcompat_sigil.h"
 #include "kcompat_generated_defs.h"
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
+#define del_timer_sync timer_delete_sync
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)
+static inline void eth_hw_addr_set(struct net_device *dev, const u8 *addr)
+{
+    memcpy(dev->dev_addr, addr, ETH_ALEN);
+}
+
+
+static inline struct i2c_client * i2c_new_client_device(struct i2c_adapter *adap, struct i2c_board_info const *info)
+{
+        return i2c_new_device(adap, info);
+}
+#endif
 
 #if defined(DEBUG) || defined(DEBUG_DUMP) || defined(DEBUG_ICR) \
 	|| defined(DEBUG_ITR)
@@ -40,7 +70,7 @@
 #define DRV_DEBUG
 #endif
 #define DRV_HW_PERF
-#define VERSION_SUFFIX
+#define VERSION_SUFFIX " DPLL Octo"
 
 #define DRV_VERSION	"5.20.28" VERSION_SUFFIX DRV_DEBUG DRV_HW_PERF
 #define DRV_SUMMARY	"Intel(R) Gigabit Ethernet Linux Driver"
@@ -97,6 +127,8 @@ static int igb_setup_all_rx_resources(struct igb_adapter *);
 static void igb_free_all_tx_resources(struct igb_adapter *);
 static void igb_free_all_rx_resources(struct igb_adapter *);
 static void igb_setup_mrqc(struct igb_adapter *);
+//static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, intptr_t *len);
+static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len);
 static int igb_probe(struct pci_dev *, const struct pci_device_id *);
 static void igb_remove(struct pci_dev *pdev);
 static int igb_sw_init(struct igb_adapter *);
@@ -110,6 +142,11 @@ static void igb_set_rx_mode(struct net_device *);
 static void igb_update_phy_info(struct timer_list *t);
 static void igb_watchdog(struct timer_list *t);
 static void igb_watchdog_task(struct work_struct *);
+
+static void igb_dpll_task(struct work_struct *);
+static void vcodac_task(struct work_struct *);
+unsigned int mcp4725_set_value ( struct igb_adapter *adapter );
+
 static void igb_dma_err_task(struct work_struct *);
 static void igb_dma_err_timer(struct timer_list *t);
 static netdev_tx_t igb_xmit_frame(struct sk_buff *skb, struct net_device *);
@@ -280,6 +317,80 @@ MODULE_DESCRIPTION(DRV_SUMMARY);
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_VERSION);
 
+#define LMK05318_HEXREGVAL_PATH        "octo/2409/LMK05318/"
+#define LMK05318_HEXREGVAL_FILE        LMK05318_HEXREGVAL_PATH "HexRegisterValues"
+MODULE_FIRMWARE(LMK05318_HEXREGVAL_FILE".txt");
+
+static bool ignore_nvm_checksum;
+module_param(ignore_nvm_checksum, bool, 0);
+MODULE_PARM_DESC(ignore_nvm_checksum,
+                "Set to ignore nvm checksum validation (defaults N)");
+
+//octo
+static int xtalcal = 0;
+module_param(xtalcal, int, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(xtalcal, "PHC crystal calibration in PPB @ 25C (default read from NVM)");
+
+static int i2c_bus = -1;
+module_param(i2c_bus, int, 0);
+MODULE_PARM_DESC(i2c_bus, "i2c prefered bus nr (-1 = auto (default), -2 = disabled)");
+
+static int i2c_delay = 0; //default defined at algo
+module_param(i2c_delay, int, 0);
+MODULE_PARM_DESC(i2c_delay, "i2c_delay for SDP's bitbanging i2c port (default 15 uS)");
+
+static int i2c_leds = 0;
+module_param(i2c_leds, int, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(i2c_leds, "i2c_leds mask bit0,1,2,3");
+
+static int i2c_probe = -1;
+module_param(i2c_probe, int, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(i2c_probe, "force i2c probe mask");
+
+static int lmkreg = 0x000e;
+module_param(lmkreg, int, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(lmkreg, "monitor LMK05318B register <lmkreg> on PCA9557@19 leds (default R14:INT_LIVE1 @ 0x000E) (special cases 0:status, 1:softreset, 2:skip eeprom, 3:sysfs leds)");
+
+static int dacval = 2048;
+module_param(dacval, int, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(dacval, "VC-OCXO DAC value (default:2048) ");
+
+static int vco_mode = 0;
+module_param(vco_mode, int, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(vco_mode, "adjust VCO DAC mode 0:disabled, 1:freqlock, 2:phaselock (default:0)");
+
+static int dacval_hist_interval = 300;
+module_param(dacval_hist_interval, int, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(dacval_hist_interval, "VCO DAC update interval (default:300, 0:disable)");
+
+static int lmkfw = 0;
+module_param(lmkfw, int, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(lmkfw, "DPLL firmware load (default read from OTP)");
+
+static int lmkocxotemp = 55;
+module_param(lmkocxotemp, int, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(lmkocxotemp, "OCXO temperature thresshold (default 55 C)");
+
+//static int lmkaddr = 0x64;
+//module_param(lmkaddr, int, S_IRUSR | S_IWUSR);
+//MODULE_PARM_DESC(lmkaddr, "LMK05318B address (default 0x64)");
+
+static int dco_step = 0x00;
+module_param(dco_step, int, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(dco_step, "LMK05318B DPLL_FDEV (default 0x00, max 0x1fffff)");
+
+static bool doubleedge;
+module_param(doubleedge, bool, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(doubleedge, "extpps timestamp on rising and falling edge");
+
+static int dpll_0_state = 0x00;
+module_param(dpll_0_state, int, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(dpll_0_state, "DPLL_UNKNOWN = -1, DPLL_INVALID = 0, DPLL_FREERUN = 1, DPLL_LOCKED = 2, DPLL_LOCKED_HO_ACQ = 3, DPLL_HOLDOVER = 4");
+
+static u64 rtc_tv_sec = 0;
+static u64 rtc_tv_nsec;
+
+
 static void igb_vfta_set(struct igb_adapter *adapter, u32 vid, bool add)
 {
 	struct e1000_hw *hw = &adapter->hw;
@@ -308,7 +419,7 @@ static void igb_vfta_set(struct igb_adapter *adapter, u32 vid, bool add)
 }
 
 static int debug = NETIF_MSG_DRV | NETIF_MSG_PROBE;
-module_param(debug, int, 0);
+module_param(debug, int, S_IRUSR | S_IWUSR);
 MODULE_PARM_DESC(debug, "Debug level (0=none, ..., 16=all)");
 
 /**
@@ -1664,6 +1775,252 @@ static void igb_check_swap_media(struct igb_adapter *adapter)
 	}
 }
 
+        #define M41T80_REG_SSEC         0x00
+        #define M41T80_REG_SEC          0x01
+        #define M41T80_REG_MIN          0x02
+        #define M41T80_REG_HOUR         0x03
+        #define M41T80_REG_WDAY         0x04
+        #define M41T80_REG_DAY          0x05
+        #define M41T80_REG_MON          0x06
+        #define M41T80_REG_YEAR         0x07
+        #define M41T80_REG_FLAGS        0x0f
+        #define M41T80_FLAGS_OF         BIT(2)  /* OF: Oscillator Failure Bit */
+        #define M41T80_FEATURE_SQ_ALT   BIT(4)  /* RSx bits are in reg 4 */
+
+struct rtc_time {
+        int tm_sec;
+        int tm_min;
+        int tm_hour;
+        int tm_mday;
+        int tm_mon;
+        int tm_year;
+        int tm_wday;
+        int tm_yday;
+        int tm_isdst;
+        int tm_nsec;
+};
+
+static int m41t80_rtc_read_time(struct device *dev, struct rtc_time *tm)
+{
+        struct i2c_client *client = to_i2c_client(dev);
+        unsigned char buf[8];
+        int err, flags;
+
+        flags = i2c_smbus_read_byte_data(client, M41T80_REG_FLAGS);
+        if (flags < 0)
+                return flags;
+
+        if (flags & M41T80_FLAGS_OF) {
+                dev_err(&client->dev, "Oscillator failure, data is invalid.\n");
+                return -EINVAL;
+        }
+
+        err = i2c_smbus_read_i2c_block_data(client, M41T80_REG_SSEC,
+                                            sizeof(buf), buf);
+        if (err < 0) {
+                dev_err(&client->dev, "Unable to read date\n");
+                return err;
+        }
+
+        tm->tm_sec = bcd2bin(buf[M41T80_REG_SEC] & 0x7f);
+        tm->tm_min = bcd2bin(buf[M41T80_REG_MIN] & 0x7f);
+        tm->tm_hour = bcd2bin(buf[M41T80_REG_HOUR] & 0x3f);
+        tm->tm_mday = bcd2bin(buf[M41T80_REG_DAY] & 0x3f);
+        tm->tm_wday = buf[M41T80_REG_WDAY] & 0x07;
+        tm->tm_mon = bcd2bin(buf[M41T80_REG_MON] & 0x1f) - 1;
+
+        tm->tm_nsec = bcd2bin(buf[M41T80_REG_SSEC]) * 10000000;
+
+        /* assume 20YY not 19YY, and ignore the Century Bit */
+        tm->tm_year = bcd2bin(buf[M41T80_REG_YEAR]) + 100;
+        return 0;
+}
+
+static int pcf8563_rtc_read_time(struct device *dev, struct rtc_time *tm)
+{
+        struct i2c_client *client = to_i2c_client(dev);
+        int err;
+
+        if(i2c_smbus_read_byte_data(client, 2) >= 0) {
+                err = bcd2bin(i2c_smbus_read_byte_data(client, 2) & 0x80);
+                if (err) {
+                        dev_warn(&client->dev,
+                                 "RTC supercap low voltage detected, date/time is not reliable.\n");
+                        return -EINVAL;
+                }
+
+                tm->tm_sec = bcd2bin(i2c_smbus_read_byte_data(client, 2) & 0x7f);
+                tm->tm_min = bcd2bin(i2c_smbus_read_byte_data(client, 3) & 0x7f);
+                tm->tm_hour = bcd2bin(i2c_smbus_read_byte_data(client, 4) & 0x3f);
+                tm->tm_mday = bcd2bin(i2c_smbus_read_byte_data(client, 5) & 0x3f);
+                tm->tm_wday = bcd2bin(i2c_smbus_read_byte_data(client, 6) & 0x07);
+                tm->tm_mon = bcd2bin(i2c_smbus_read_byte_data(client, 7) & 0x1f);
+                tm->tm_year = bcd2bin(i2c_smbus_read_byte_data(client, 8) );
+                if (tm->tm_year < 70) tm->tm_year += 100;
+                tm->tm_year += 0; //1900;
+                tm->tm_nsec = 0;
+        } else return 1;
+
+        return 0;
+}
+
+/*
+
+static int m41t80_rtc_set_time(struct device *dev, struct rtc_time *tm)
+{
+        struct i2c_client *client = to_i2c_client(dev);
+        struct m41t80_data *clientdata = i2c_get_clientdata(client);
+        unsigned char buf[8];
+        int err, flags;
+
+        if (tm->tm_year < 100 || tm->tm_year > 199)
+                return -EINVAL;
+
+        buf[M41T80_REG_SSEC] = 0;
+        buf[M41T80_REG_SEC] = bin2bcd(tm->tm_sec);
+        buf[M41T80_REG_MIN] = bin2bcd(tm->tm_min);
+        buf[M41T80_REG_HOUR] = bin2bcd(tm->tm_hour);
+        buf[M41T80_REG_DAY] = bin2bcd(tm->tm_mday);
+        buf[M41T80_REG_MON] = bin2bcd(tm->tm_mon + 1);
+        buf[M41T80_REG_YEAR] = bin2bcd(tm->tm_year - 100);
+        buf[M41T80_REG_WDAY] = tm->tm_wday;
+
+        // If the square wave output is controlled in the weekday register
+        if (clientdata->features & M41T80_FEATURE_SQ_ALT) {
+                int val;
+
+                val = i2c_smbus_read_byte_data(client, M41T80_REG_WDAY);
+                if (val < 0)
+                        return val;
+
+                buf[M41T80_REG_WDAY] |= (val & 0xf0);
+        }
+
+        err = i2c_smbus_write_i2c_block_data(client, M41T80_REG_SSEC,
+                                             sizeof(buf), buf);
+        if (err < 0) {
+                dev_err(&client->dev, "Unable to write to date registers\n");
+                return err;
+        }
+
+        // Clear the OF bit of Flags Register
+        flags = i2c_smbus_read_byte_data(client, M41T80_REG_FLAGS);
+        if (flags < 0)
+                return flags;
+
+        if (i2c_smbus_write_byte_data(client, M41T80_REG_FLAGS,
+                                      flags & ~M41T80_FLAGS_OF)) {
+                dev_err(&client->dev, "Unable to write flags register\n");
+                return -EIO;
+        }
+
+        return err;
+}
+*/
+
+/*
+static int m41t80_rtc_set_time(struct device *dev, struct rtc_time *tm)
+{
+
+        struct rtc_time rtc_raw, rtc_raw_retry;
+
+
+  // Retry reading the rtc until both read attempts give the same sec value.
+  // This way the race condition is prevented that the RTC has updated itself
+  // during the first read operation.
+  do {
+    status = ioctl(fd, RTC_RD_TIME, &rtc_raw);
+    if (status >= 0) {
+
+      status = ioctl(fd, RTC_RD_TIME, &rtc_raw_retry);
+    }
+  } while (status >= 0 && rtc_raw.tm_sec != rtc_raw_retry.tm_sec);
+
+}
+*/
+
+
+/* RTC registers don't differ much, except for the century flag */
+#define DS1307_REG_SECS         0x00    /* 00-59 */
+#define DS1307_REG_MIN          0x01    /* 00-59 */
+#       define M41T0_BIT_OF             0x80
+#define DS1307_REG_HOUR         0x02    /* 00-23, or 1-12{am,pm} */
+#define DS1307_REG_WDAY         0x03    /* 01-07 */
+#define DS1307_REG_MDAY         0x04    /* 01-31 */
+#define DS1307_REG_MONTH        0x05    /* 01-12 */
+#define DS1307_REG_YEAR         0x06    /* 00-99 */
+
+// ds1307 drift in nvram
+static int ds1307_get_time(struct device *dev, struct rtc_time *t)
+{
+        struct i2c_client *client = to_i2c_client(dev);
+        int             tmp, ret;
+        u8 regs[7];
+
+        /* read the RTC date and time registers all at once */
+        ret = i2c_smbus_read_i2c_block_data(client, 0,
+                                            sizeof(regs), regs);
+        if (ret < 0) {
+                dev_err(dev, "%s error %d\n", "READ", ret);
+                return ret;
+        }
+
+        /* if oscillator fail bit is set, no data can be trusted */
+        if (regs[DS1307_REG_MIN] & M41T0_BIT_OF) {
+                dev_warn_once(dev, "oscillator failed, set time!\n");
+                return -EINVAL;
+        }
+
+        t->tm_sec = bcd2bin(regs[DS1307_REG_SECS] & 0x7f);
+        t->tm_min = bcd2bin(regs[DS1307_REG_MIN] & 0x7f);
+        tmp = regs[DS1307_REG_HOUR] & 0x3f;
+        t->tm_hour = bcd2bin(tmp);
+        t->tm_wday = bcd2bin(regs[DS1307_REG_WDAY] & 0x07) - 1;
+        t->tm_mday = bcd2bin(regs[DS1307_REG_MDAY] & 0x3f);
+        tmp = regs[DS1307_REG_MONTH] & 0x1f;
+        t->tm_mon = bcd2bin(tmp) - 1;
+        t->tm_year = bcd2bin(regs[DS1307_REG_YEAR]) + 100;
+        t->tm_nsec = 0;
+
+//            if(IS_ENABLED(CONFIG_RTC_DRV_DS1307_CENTURY))
+//                t->tm_year += 100;
+
+        return 0;
+}
+
+
+static int rtc_read_time(struct device *dev, struct rtc_time *tm, u8 *rtcname)
+{
+        struct i2c_client *i2c_rtc = to_i2c_client(dev);
+        int err;
+        int rtctype = 0;
+
+        if( !strncmp(i2c_rtc->name, "pcf8563",11) ) rtctype = 1;
+        if( !strncmp(i2c_rtc->name, "m41t80",11) ) rtctype = 2;
+        if( !strncmp(i2c_rtc->name, "ds1307",11) ) rtctype = 3;
+
+        switch (rtctype) {
+        case 1:
+                err = pcf8563_rtc_read_time(&i2c_rtc->dev, tm);
+                strncpy(rtcname,i2c_rtc->name,11);
+                break;
+        case 2:
+                err = m41t80_rtc_read_time(&i2c_rtc->dev, tm);
+                strncpy(rtcname,i2c_rtc->name,11);
+                break;
+        case 3:
+                err = ds1307_get_time(&i2c_rtc->dev, tm);
+                strncpy(rtcname,i2c_rtc->name,11);
+                break;
+        default:
+                return -EINVAL;
+        }
+
+        return err;
+}
+
+
+
 #ifdef HAVE_I2C_SUPPORT
 /*  igb_get_i2c_data - Reads the I2C SDA data bit
  *  @hw: pointer to hardware structure
@@ -1742,6 +2099,149 @@ static int igb_get_i2c_clk(void *data)
 	return !!(i2cctl & E1000_I2C_CLK_IN);
 }
 
+/*********************************************************
+ *  igb_get_i2c_data2 - Reads the I2C SDA data bit
+ *  @hw: pointer to hardware structure
+ *  @i2cctl: Current value of I2CCTL register
+ *
+ *  Returns the I2C data bit value
+ *********************************************************/
+static int igb_get_i2c_data2(void *data)
+{
+        struct igb_adapter *adapter = (struct igb_adapter *)data;
+        struct e1000_hw *hw = &adapter->hw;
+//        u32 ctrl_ext = rd32(E1000_CTRL_EXT);
+        u32 ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
+
+        ctrl_ext &= ~E1000_CTRL_EXT_SDP3_DIR;
+
+//        wr32(E1000_CTRL_EXT, ctrl_ext);
+        E1000_WRITE_REG(hw, E1000_CTRL_EXT, ctrl_ext);
+//      usleep_range(10, 20);
+//        wr32(E1000_CTRL_EXT, ctrl_ext);
+
+//        ctrl_ext = rd32(E1000_CTRL_EXT);
+        ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
+
+        return !!(ctrl_ext & E1000_TS_SDP3_DATA);
+
+}
+
+/*********************************************************
+ *  igb_set_i2c_data2 - Sets the I2C data bit
+ *  @data: pointer to hardware structure
+ *  @state: I2C data value (0 or 1) to set
+ *
+ *  Sets the I2C data bit
+ *********************************************************/
+static void igb_set_i2c_data2(void *data, int state)
+{
+        struct igb_adapter *adapter = (struct igb_adapter *)data;
+        struct e1000_hw *hw = &adapter->hw;
+//        u32 ctrl_ext = rd32(E1000_CTRL_EXT);
+        u32 ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
+
+        if (state) {
+                ctrl_ext |= E1000_TS_SDP3_DATA;
+                ctrl_ext &= ~E1000_CTRL_EXT_SDP3_DIR;
+        } else {
+                ctrl_ext &= ~E1000_TS_SDP3_DATA;
+                ctrl_ext |= E1000_CTRL_EXT_SDP3_DIR;
+        }
+
+//        ctrl_ext &= ~E1000_CTRL_EXT_SDP3_DIR;
+        ctrl_ext &= ~E1000_CTRL_EXT_SDP2_DIR;
+
+//        wr32(E1000_CTRL_EXT, ctrl_ext);
+        E1000_WRITE_REG(hw, E1000_CTRL_EXT, ctrl_ext);
+//      usleep_range(10, 20);
+//        wr32(E1000_CTRL_EXT, ctrl_ext);
+//        wrfl();
+	E1000_WRITE_FLUSH(hw);
+}
+
+/*********************************************************
+ *  igb_set_i2c_clk2 - Sets the I2C SCL clock
+ *  @data: pointer to hardware structure
+ *  @state: state to set clock
+ *
+ *  Sets the I2C clock line to state
+ *********************************************************/
+static void igb_set_i2c_clk2(void *data, int state)
+{
+        struct igb_adapter *adapter = (struct igb_adapter *)data;
+        struct e1000_hw *hw = &adapter->hw;
+        u32 ctrl_ext;
+
+//        ctrl_ext = rd32(E1000_CTRL_EXT);
+        ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
+
+        if (state) {
+                ctrl_ext |= E1000_TS_SDP2_DATA;
+                ctrl_ext &= ~E1000_CTRL_EXT_SDP2_DIR;
+        } else {
+                ctrl_ext &= ~E1000_TS_SDP2_DATA;
+                ctrl_ext |= E1000_CTRL_EXT_SDP2_DIR;
+        }
+
+//        wr32(E1000_CTRL_EXT, ctrl_ext);
+        E1000_WRITE_REG(hw, E1000_CTRL_EXT, ctrl_ext);
+//      usleep_range(10, 20);
+//        wr32(E1000_CTRL_EXT, ctrl_ext);
+//        wrfl();
+	E1000_WRITE_FLUSH(hw);
+//      usleep_range(adapter->i2c_algo.udelay, adapter->i2c_algo.udelay + 10);
+}
+
+/***************************************************************
+ *  igb_get_i2c_clk2 - Gets the I2C SCL clock state
+ *  @data: pointer to hardware structure
+ *
+ *  Gets the I2C clock state
+ ***************************************************************/
+static int igb_get_i2c_clk2(void *data)
+{
+        struct igb_adapter *adapter = (struct igb_adapter *)data;
+        struct e1000_hw *hw = &adapter->hw;
+//        u32 ctrl_ext = rd32(E1000_CTRL_EXT);
+        u32 ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
+
+        ctrl_ext &= ~E1000_CTRL_EXT_SDP2_DIR;
+
+//        wr32(E1000_CTRL_EXT, ctrl_ext);
+        E1000_WRITE_REG(hw, E1000_CTRL_EXT, ctrl_ext);
+//      usleep_range(10, 20);
+//        wr32(E1000_CTRL_EXT, ctrl_ext);
+
+//        ctrl_ext = rd32(E1000_CTRL_EXT);
+        ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
+
+        return !!(ctrl_ext & E1000_TS_SDP2_DATA);
+
+
+}
+
+/*
+static int igb_i2c_pre_xfer(struct i2c_adapter *i2c_adap)
+{
+//      struct igb_adapter *adapter = container_of(i2c_adap, struct igb_adapter, i2c_adap);
+//      mutex_lock(&adapter->lmk_mutex);
+
+//        if( ! (i2c_leds & 0x08)) mutex_lock(&adapter->led_mutex);
+
+        return 0;
+}
+
+static void igb_i2c_post_xfer(struct i2c_adapter *i2c_adap)
+{
+//      struct igb_adapter *adapter = container_of(i2c_adap, struct igb_adapter, i2c_adap);
+
+//      mutex_unlock(&adapter->lmk_mutex);
+//        if( ! (i2c_leds & 0x08)) mutex_unlock(&adapter->led_mutex);
+
+}
+*/
+
 static const struct i2c_algo_bit_data igb_i2c_algo = {
 	.setsda		= igb_set_i2c_data,
 	.setscl		= igb_set_i2c_clk,
@@ -1751,6 +2251,83 @@ static const struct i2c_algo_bit_data igb_i2c_algo = {
 	.timeout	= 20,
 };
 
+static const struct i2c_algo_bit_data igb_i2c_algo2 = {
+        .setsda         = igb_set_i2c_data2,
+        .setscl         = igb_set_i2c_clk2,
+        .getsda         = igb_get_i2c_data2,
+        .getscl         = igb_get_i2c_clk2,
+        .udelay         = 5,
+        /* Wait up to 50 ms for slave to let us pull SCL high */
+        .timeout        = DIV_ROUND_UP(HZ, 20),
+//        .timeout        = 20, // jiffies
+//        .post_xfer      = igb_i2c_post_xfer,
+//        .pre_xfer       = igb_i2c_pre_xfer,
+};
+
+
+static struct i2c_board_info rtc_info = {
+        I2C_BOARD_INFO("pcf8563", (0x51)),
+};
+
+static struct i2c_board_info rtc2_info = {
+        I2C_BOARD_INFO("m41t80", (0x68)),
+};
+
+static struct i2c_board_info rtc3_info = {
+        I2C_BOARD_INFO("ds1307", (0x68)),
+};
+
+static struct i2c_board_info pcf8574_1_info = {
+        I2C_BOARD_INFO("pcf8574_1", (0x20)),
+};
+
+static struct i2c_board_info pcf8574_2_info = {
+        I2C_BOARD_INFO("pcf8574_2", (0x21)),
+};
+
+static struct i2c_board_info pca9557_1_info = {
+        I2C_BOARD_INFO("pca9557_1", (0x18)),
+};
+
+static struct i2c_board_info pca9557_2_info = {
+        I2C_BOARD_INFO("pca9557_2", (0x19)),
+};
+
+struct i2c_board_info dac1_info = {
+        I2C_BOARD_INFO("mcp4725_1", (0x60)),
+};
+
+struct i2c_board_info dac2_info = {
+        I2C_BOARD_INFO("mcp4725_2", (0x61)),
+};
+
+struct i2c_board_info lmk05318b_info = {
+//        I2C_BOARD_INFO("lmk05318b_1", (lmkaddr)), // 0x64
+        I2C_BOARD_INFO("lmk05318b_1", 0x64),
+};
+
+static struct i2c_board_info cdce813_info = {
+        I2C_BOARD_INFO("cdce813_1", 0x65),
+};
+
+//struct i2c_board_info tmp_info = {
+//      I2C_BOARD_INFO("tmp102_1", (0x48)),
+//};
+
+static struct i2c_board_info tmp_2_info = {
+        I2C_BOARD_INFO("tmp102_2", (0x4a)),
+};
+
+static struct i2c_board_info eeprom_info = {
+        I2C_BOARD_INFO("eeprom_1", (0x50)),
+};
+
+static struct i2c_board_info eeprom2_info = {
+        I2C_BOARD_INFO("eeprom_2", (0x54)),
+};
+
+
+
 /*  igb_init_i2c - Init I2C interface
  *  @adapter: pointer to adapter structure
  *
@@ -1758,10 +2335,35 @@ static const struct i2c_algo_bit_data igb_i2c_algo = {
 static s32 igb_init_i2c(struct igb_adapter *adapter)
 {
 	s32 status = E1000_SUCCESS;
+//        struct i2c_client *client, *client2;
+        struct i2c_client *i2c_dipsw; // 0x20 or 0x18
+        struct i2c_client *i2c_gpi2; // 0x21
+        struct i2c_client *i2c_pca9557_19; // 0x19
+        struct i2c_client *i2c_rtc; // 0x51 / 0x68
+        struct i2c_client *i2c_lmk05318b; // 0x64
+        struct i2c_client *i2c_cdce813; // 0x65
+        //struct i2c_client *i2c_gps; // 0x42
+        //struct i2c_client *i2c_adc; // 0x48
+        //struct i2c_client *i2c_tmp; // 0x49
+        struct i2c_client *i2c_tmpocxo; // 0x4a
+        struct i2c_client *i2c_eeprom; // 0x50
+        struct i2c_client *i2c_dac1; // 0x60 VCO
+        struct i2c_client *i2c_dac2; // 0x61 DAC2
+//        int sec_bin, min_bin, hour_bin, mday_bin,  wday_bin, mon_bin, year_bin;
+        int ret;
+        int rtctype = 0; // 1:pcf8563, 2:m41t81, 3:ds1307
+
 
 	/* I2C interface supported on i350 devices */
-	if (adapter->hw.mac.type != e1000_i350)
-		return E1000_SUCCESS;
+//	if (adapter->hw.mac.type != e1000_i350)
+//		return E1000_SUCCESS;
+
+        /* I2C interface supported on i350 devices */
+        if (adapter->hw.mac.type != e1000_i350) {
+//              netdev_err(adapter->netdev,
+//                      "not i350\n");
+//              return 0;
+        } else {
 
 	/* Initialize the i2c bus which is controlled by the registers.
 	 * This bus will use the i2c_algo_bit structue that implements
@@ -1775,8 +2377,1135 @@ static s32 igb_init_i2c(struct igb_adapter *adapter)
 	strscpy(adapter->i2c_adap.name, "igb BB",
 		sizeof(adapter->i2c_adap.name));
 	status = i2c_bit_add_bus(&adapter->i2c_adap);
-	return status;
+	}
+
+        mutex_init(&adapter->lmk_mutex);
+
+        if (adapter->hw.mac.type == e1000_i210 || adapter->hw.mac.type == e1000_i211) {
+//      if (adapter->hw.mac.type == e1000_i210 ) {
+                adapter->i2c_adap2.owner = THIS_MODULE;
+                adapter->i2c_algo2 = igb_i2c_algo2;
+                adapter->i2c_algo2.udelay = i2c_delay == 0 ? 15 : i2c_delay;
+                adapter->i2c_algo2.data = adapter;
+                adapter->i2c_adap2.algo_data = &adapter->i2c_algo2;
+                adapter->i2c_adap2.dev.parent = &adapter->pdev->dev;
+                adapter->i2c_adap2.nr         = i2c_bus; //adapter->dipsw
+
+if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
+
+
+                strlcpy(adapter->i2c_adap2.name, "igb SDP",
+                        sizeof(adapter->i2c_adap2.name));
+
+                if(i2c_bus >= 0) {
+                        status = i2c_bit_add_numbered_bus(&adapter->i2c_adap2);
+                } else {
+                        if( !(i2c_bus == -2) ) {
+                                status = i2c_bit_add_bus(&adapter->i2c_adap2);
+                        }
+                }
+        }
+
+        if(status) goto geen_dipsw;
+
+
+        // init i2c_clients
+
+//        i2c_dipsw = i2c_new_device(&adapter->i2c_adap2, &pcf8574_1_info);
+        i2c_dipsw = i2c_new_client_device(&adapter->i2c_adap2, &pcf8574_1_info);
+        if (i2c_dipsw == NULL) {
+                dev_info(&adapter->pdev->dev,
+                         "Failed to create i2c device pcf8574_1.\n");
+                goto geen_dipsw;
+        }
+
+//        i2c_gpi2 = i2c_new_device(&adapter->i2c_adap2, &pcf8574_2_info);
+        i2c_gpi2 = i2c_new_client_device(&adapter->i2c_adap2, &pcf8574_2_info);
+        if (i2c_gpi2 == NULL) {
+                dev_info(&adapter->pdev->dev,
+                         "Failed to create i2c device pcf8574_2.\n");
+        }
+
+        ret = i2c_smbus_read_byte(i2c_dipsw);
+        if ( ret < 0 ) {
+                i2c_unregister_device(i2c_dipsw);
+                adapter->i2c_dipsw = 0;
+//                i2c_dipsw = i2c_new_device(&adapter->i2c_adap2, &pca9557_1_info);
+                i2c_dipsw = i2c_new_client_device(&adapter->i2c_adap2, &pca9557_1_info);
+                if (i2c_dipsw == NULL) {
+                        dev_info(&adapter->pdev->dev,
+                                 "Failed to create i2c device pca9557_1.\n");
+                        goto geen_dipsw;
+                }
+
+                if(i2c_dipsw->addr == 0x20)
+                        ret = i2c_smbus_read_byte(i2c_dipsw);
+                if(i2c_dipsw->addr == 0x18)
+                        ret = i2c_smbus_read_byte_data(i2c_dipsw, 0);
+
+                if ( ret < 0 ) {
+                        i2c_unregister_device(i2c_dipsw);
+                        adapter->i2c_dipsw = 0;
+                        goto geen_dipsw;
+                } else {
+                        adapter->i2c_dipsw = i2c_dipsw;
+                }
+        } else {
+                adapter->i2c_dipsw = i2c_dipsw;
+        }
+
+        if (i2c_probe < 0 && adapter->hw.mac.type == e1000_i211) adapter->part_boardfeatures  |= 0x00c4;
+
+
+//        i2c_tmpocxo = i2c_new_device(&adapter->i2c_adap2, &tmp_2_info);
+        i2c_tmpocxo = i2c_new_client_device(&adapter->i2c_adap2, &tmp_2_info);
+        if (i2c_tmpocxo == NULL) {
+                dev_info(&adapter->pdev->dev,
+                         "Failed to create i2c device tmp_2.\n");
+        } else {
+                ret = i2c_smbus_read_byte_data(i2c_tmpocxo, 0);
+                if ( ret < 0 ) {
+                        i2c_unregister_device(i2c_tmpocxo);
+                        adapter->i2c_tmpocxo = 0;
+                } else {
+                        adapter->i2c_tmpocxo = i2c_tmpocxo;
+                }
+        }
+
+//        i2c_pca9557_19 = i2c_new_device(&adapter->i2c_adap2, &pca9557_2_info);
+        i2c_pca9557_19 = i2c_new_client_device(&adapter->i2c_adap2, &pca9557_2_info);
+        if (i2c_pca9557_19 == NULL) {
+                dev_info(&adapter->pdev->dev,
+                         "Failed to create i2c device pca9557_2.\n");
+        } else {
+                ret = i2c_smbus_read_byte_data(i2c_pca9557_19, 0);
+                if ( ret < 0 ) {
+                        i2c_unregister_device(i2c_pca9557_19);
+                        adapter->i2c_pca9557_19 = 0;
+                } else {
+                        adapter->i2c_pca9557_19 = i2c_pca9557_19;
+                }
+        }
+
+//        i2c_cdce813 = i2c_new_device(&adapter->i2c_adap2, &cdce813_info);
+        i2c_cdce813 = i2c_new_client_device(&adapter->i2c_adap2, &cdce813_info);
+        if (i2c_cdce813 == NULL) {
+                dev_info(&adapter->pdev->dev,
+                         "Failed to create i2c device cdce813.\n");
+        } else {
+                ret = i2c_smbus_read_byte_data(i2c_cdce813, 0);
+                if ( ret < 0 ) {
+                        i2c_unregister_device(i2c_cdce813);
+                        adapter->i2c_cdce813 = 0;
+                } else {
+                        adapter->i2c_cdce813 = i2c_cdce813;
+
+                }
+        }
+
+//        i2c_lmk05318b = i2c_new_device(&adapter->i2c_adap2, &lmk05318b_info);
+        i2c_lmk05318b = i2c_new_client_device(&adapter->i2c_adap2, &lmk05318b_info);
+        if (i2c_lmk05318b == NULL) {
+                dev_info(&adapter->pdev->dev,
+                         "Failed to create i2c device lmk05318b.\n");
+        } else {
+                ret = i2c_smbus_read_byte_data(i2c_lmk05318b, 0);
+                if ( ret < 0 ) {
+                        i2c_unregister_device(i2c_lmk05318b);
+                        adapter->i2c_lmk05318b = 0;
+                } else {
+                        adapter->i2c_lmk05318b = i2c_lmk05318b;
+                        adapter->lmkreg = lmkreg;
+                        dev_info(&adapter->pdev->dev,
+                                "monitor lmk05318b register R%d @ 0x%04x on leds D12-D19.\n", lmkreg, lmkreg);
+
+                }
+        }
+
+//        i2c_dac1 = i2c_new_device(&adapter->i2c_adap2, &dac1_info);
+        i2c_dac1 = i2c_new_client_device(&adapter->i2c_adap2, &dac1_info);
+        if (i2c_dac1 == NULL) {
+                dev_info(&adapter->pdev->dev,
+                         "Failed to create i2c device mcp4725_1.\n");
+        } else {
+                ret = i2c_smbus_read_byte(i2c_dac1);
+                if ( ret < 0 ) {
+                        adapter->i2c_dac1 = 0;
+                } else {
+                        adapter->i2c_dac1 = i2c_dac1;
+                        //adapter->dac1val = dacval;
+                        //mcp4725_set_value(adapter );
+                }
+        }
+
+//        i2c_dac2 = i2c_new_device(&adapter->i2c_adap2, &dac2_info);
+        i2c_dac2 = i2c_new_client_device(&adapter->i2c_adap2, &dac2_info);
+        if (i2c_dac2 == NULL) {
+                dev_info(&adapter->pdev->dev,
+                         "Failed to create i2c device mcp4725_2.\n");
+        } else {
+                ret = i2c_smbus_read_byte(i2c_dac2);
+                if ( ret < 0 ) {
+                        adapter->i2c_dac2 = 0;
+                } else {
+                        adapter->i2c_dac2 = i2c_dac2;
+                        adapter->dac2val = 2048;//dac2val;
+                        mcp4725_set_value(adapter );
+                }
+        }
+
+
+//        i2c_eeprom = i2c_new_device(&adapter->i2c_adap2, &eeprom_info);
+        i2c_eeprom = i2c_new_client_device(&adapter->i2c_adap2, &eeprom_info);
+        if (i2c_eeprom == NULL) {
+                dev_info(&adapter->pdev->dev,
+                         "Failed to create i2c device eeprom_1.\n");
+                        goto geen_eeprom;
+        }
+        ret = i2c_smbus_read_byte(i2c_eeprom);
+        if ( ret < 0 ) {
+                dev_info(&adapter->pdev->dev, "Failed to create eeprom_1.\n");
+                i2c_unregister_device(i2c_eeprom);
+                adapter->i2c_eeprom = 0;
+//                i2c_eeprom = i2c_new_device(&adapter->i2c_adap2, &eeprom2_info);
+                i2c_eeprom = i2c_new_client_device(&adapter->i2c_adap2, &eeprom2_info);
+                if (i2c_eeprom == NULL) {
+                        dev_info(&adapter->pdev->dev,
+                                "Failed to create i2c device eeprom_2.\n");
+                        goto geen_eeprom;
+                }
+        }
+
+        ret = i2c_smbus_read_byte(i2c_eeprom);
+        if ( ret < 0 ) {
+                i2c_unregister_device(i2c_eeprom);
+                adapter->i2c_eeprom = 0;
+//                goto geen_eeprom;
+        } else {
+                adapter->i2c_eeprom = i2c_eeprom;
+                dev_info(&adapter->pdev->dev, "%s (%d): eeprom @0x%02x\n", __FUNCTION__,__LINE__, adapter->i2c_eeprom->addr );
+        }
+
+
+        if(i2c_smbus_read_byte_data(i2c_eeprom, 0) >= 0) {
+                adapter->sn = i2c_smbus_read_byte_data(i2c_eeprom, 3) << 0;
+                adapter->sn += i2c_smbus_read_byte_data(i2c_eeprom, 2) << 8;
+                adapter->sn += i2c_smbus_read_byte_data(i2c_eeprom, 1) << 16;
+                adapter->sn += i2c_smbus_read_byte_data(i2c_eeprom, 0) << 24;
+                        if(adapter->sn > 0) dev_info(&adapter->pdev->dev,
+                                 "s/n:%08d\n", adapter->sn);
+                adapter->i2c_eeprom = i2c_eeprom;
+        }
+
+geen_eeprom:
+
+        if(i2c_smbus_read_byte_data(i2c_dipsw, 0) >= 0) {
+                int dipsw_l = -1;
+                if(adapter->i2c_eeprom) dipsw_l = i2c_smbus_read_byte_data(adapter->i2c_eeprom, 4);
+
+                // PCF8574 @ 0x20
+                if(adapter->i2c_dipsw->addr == 0x20) {
+                        ret = i2c_smbus_write_byte_data(i2c_dipsw, 0, 0xff);
+                        if (ret == 0) {
+                                if(dipsw_l == 0xff || (dipsw_l >= 0 && dipsw_l < 16) ) adapter->dipsw = i2c_smbus_read_byte_data(i2c_dipsw, 0xff) >> 4;
+                                else adapter->dipsw = dipsw_l - 16;
+
+                                if (adapter->dipsw == -1 || adapter->dipsw == -17) {
+                                        goto geen_dipsw;
+                                }
+                                dev_info(&adapter->pdev->dev,
+                                         "dipsw @0x%02x ID:%02d\n", adapter->i2c_dipsw->addr, adapter->dipsw);
+                                snprintf(adapter->i2c_adap2.name, sizeof(adapter->i2c_adap2.name), "igb SDP (ID:%02d)", (unsigned int) adapter->dipsw );
+                        }
+                }
+
+                // PCA9557 @ 0x18
+                if(adapter->i2c_dipsw->addr == 0x18) {
+                        ret = i2c_smbus_write_byte_data(i2c_dipsw, 3, 0xf0);
+                        if (ret == 0) {
+                                i2c_smbus_write_byte_data(i2c_dipsw, 2, 0x00);
+                                i2c_smbus_write_byte_data(i2c_dipsw, 1, 0x0f & 0x0f);
+                                //if(dipsw_l >= 0 && dipsw_l < 16) adapter->dipsw = i2c_smbus_read_byte_data(i2c_dipsw, 0) >> 4;
+                                if(dipsw_l == 0xff || (dipsw_l >= 0 && dipsw_l < 16) ) adapter->dipsw = i2c_smbus_read_byte_data(i2c_dipsw, 0) >> 4;
+                                else adapter->dipsw = dipsw_l - 16;
+
+                                        dev_info(&adapter->pdev->dev,
+                                                 "dipsw @0x%02x ID:%02d\n", adapter->i2c_dipsw->addr, adapter->dipsw);
+                                snprintf(adapter->i2c_adap2.name, sizeof(adapter->i2c_adap2.name), "igb SDP (ID:%02d)", (unsigned int) adapter->dipsw );
+                        }
+                }
+        }
+
+//probe RTC
+        if( adapter->part_boardfeatures & 0x04) {
+//                i2c_rtc = i2c_new_device(&adapter->i2c_adap2, &rtc2_info);
+                i2c_rtc = i2c_new_client_device(&adapter->i2c_adap2, &rtc2_info);
+                if (i2c_rtc == NULL) {
+                        goto geen_rtc;
+                }
+        } else return status;
+
+        ret = i2c_smbus_read_byte(i2c_rtc);
+        if ( ret < 0 ) {
+                adapter->i2c_rtc = 0;
+                i2c_unregister_device(i2c_rtc);
+//                i2c_rtc = i2c_new_device(&adapter->i2c_adap2, &rtc_info);
+                i2c_rtc = i2c_new_client_device(&adapter->i2c_adap2, &rtc_info);
+                if (i2c_rtc == NULL) {
+                        goto geen_rtc;
+                }
+                ret = i2c_smbus_read_byte(i2c_rtc);
+                if ( ret < 0 ) {
+                        i2c_unregister_device(i2c_rtc);
+                        goto geen_rtc;
+                } else {
+//                      dev_warn(&adapter->pdev->dev, "found PCF8563 RTC\n");
+                        rtctype = 1;
+                        adapter->i2c_rtc = i2c_rtc;
+                }
+        } else {
+                int var1 = i2c_smbus_read_byte_data(i2c_rtc, 0x01);
+                int var2 = i2c_smbus_read_byte_data(i2c_rtc, 0x02);
+                int var3 = i2c_smbus_read_byte_data(i2c_rtc, 0x21);
+                int var4 = i2c_smbus_read_byte_data(i2c_rtc, 0x22);
+                if (var1 == var3 && var2 == var4 ) {
+                        rtctype = 2;
+                        adapter->i2c_rtc = i2c_rtc; //m41t81
+//                      dev_warn(&adapter->pdev->dev, "found M41T81 RTC\n");
+                } else {
+                        i2c_unregister_device(i2c_rtc);
+//                        i2c_rtc = i2c_new_device(&adapter->i2c_adap2, &rtc3_info);
+                        i2c_rtc = i2c_new_client_device(&adapter->i2c_adap2, &rtc3_info);
+                        if (i2c_rtc == NULL) {
+                                goto geen_rtc;
+                        }
+//                      dev_warn(&adapter->pdev->dev, "found DS1307 RTC\n");
+                        rtctype = 3;
+                        i2c_smbus_write_byte_data(i2c_rtc, 0x07, 0x80); // SQWE off, OUT high
+                        adapter->i2c_rtc = i2c_rtc;
+                }
+        }
+
+if ( adapter->part_boardfeatures & 0x04 ) {
+        struct rtc_time tm;
+        int err;
+        u8 rtcname[10];
+        err = rtc_read_time(&i2c_rtc->dev, &tm, rtcname);
+
+        if(!err) {
+                rtc_tv_sec = (u32) mktime64(tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+                rtc_tv_nsec = (u32) tm.tm_nsec;
+        } else {
+                rtc_tv_sec = 0;
+                goto geen_rtc;
+        }
+
+        if(rtc_tv_sec < 0 || tm.tm_mon < 0 || tm.tm_mon > 13 || tm.tm_mday > 32 || tm.tm_hour > 25 || tm.tm_min > 61) err = 1;
+        else dev_info(&adapter->pdev->dev, "%s: RTC %s UTC time %02d:%02d:%02d, "
+                "%02d-%02d-%02d, wday=%d, time=%lld.%d",
+                __func__, rtcname,
+                tm.tm_hour, tm.tm_min, tm.tm_sec,
+                tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_wday, rtc_tv_sec, tm.tm_nsec);
+
 }
+
+geen_dipsw:
+
+/*
+static struct i2c_board_info i350_sensor_info = {
+        I2C_BOARD_INFO("i350bb", (0Xf8 >> 1)),
+};
+
+        struct i2c_client *client;
+
+        // init i2c_client
+        client = i2c_new_device(&adapter->i2c_adap, &i350_sensor_info);
+        if (client == NULL) {
+                dev_info(&adapter->pdev->dev,
+                         "Failed to create new i2c device.\n");
+                rc = -ENODEV;
+                goto exit;
+        }
+        adapter->i2c_client = client;
+
+*/
+
+        return status;
+geen_rtc:
+                        dev_warn(&adapter->pdev->dev,
+                                 "Failed to read RTC device.\n");
+
+        return status;
+}
+
+//////////// leds
+static void igb_select_led(struct igb_adapter *adapter, int led,
+                           u32 *mask, u32 *shift)
+{
+        switch (led) {
+        case 0:
+                *mask  = ~( 0x01 );
+                *shift = 0;
+                break;
+        case 1:
+                *mask  = ~( 0x02 );
+                *shift = 1;
+                break;
+        case 2:
+                *mask  = ~( 0x04 );
+                *shift = 2;
+                break;
+        case 3:
+                *mask  = ~( 0x08 );
+                *shift = 3;
+                break;
+        default:
+                *mask = *shift = 0;
+                dev_err(&adapter->pdev->dev, "Unknown led %d selected!", led);
+        }
+}
+
+void igb_led_set(struct igb_adapter *adapter, int led, u16 brightness)
+{
+        //struct e1000_hw *hw = &adapter->hw;
+        u32 shift, mask, ledctl;
+
+        if( brightness > 0 ) brightness = 1; else brightness = 0;
+
+        igb_select_led(adapter, led, &mask, &shift);
+
+        if( ! (i2c_leds & 0x08)) mutex_lock(&adapter->led_mutex);
+
+        ledctl = adapter->ledctl;
+
+        ledctl &= mask;
+        ledctl |= brightness << shift;
+//      dev_err(&adapter->pdev->dev, "adapter->i2c_dipsw = %i, %02x, %02x, %02x", adapter->i2c_dipsw, ledctl, mask, shift);
+
+        adapter->ledctl = ledctl;
+
+        if(adapter->i2c_dipsw->addr == 0x20)
+                i2c_smbus_write_byte(adapter->i2c_dipsw, ~ledctl);
+
+        if(adapter->i2c_dipsw->addr == 0x18)
+                i2c_smbus_write_byte_data(adapter->i2c_dipsw, 1, ~ledctl & 0x0f);
+
+        if( ! (i2c_leds & 0x08)) mutex_unlock(&adapter->led_mutex);
+}
+
+enum led_brightness igb_led_get(struct igb_adapter *adapter, int led)
+{
+        //struct e1000_hw *hw = &adapter->hw;
+        u32 shift, mask, ledctl;
+
+        igb_select_led(adapter, led, &mask, &shift);
+
+        if( ! (i2c_leds & 0x08)) mutex_lock(&adapter->led_mutex);
+
+//      ledctl = i2c_smbus_read_byte(adapter->i2c_dipsw);
+        ledctl = adapter->ledctl;
+//      dev_err(&adapter->pdev->dev, "adapter->i2c_dipsw = %i, %02x, %02x, %02x", adapter->i2c_dipsw, ledctl, mask, shift);
+
+        if( ! (i2c_leds & 0x08)) mutex_unlock(&adapter->led_mutex);
+
+        return (ledctl & ~mask) >> shift;
+}
+
+static int igb_led0_set(struct led_classdev *ldev, enum led_brightness b)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led0);
+
+// aanroepende pid van igb_led1_set iets mee doen?
+
+        igb_led_set(adapter, 0, b);
+        return 0;
+}
+
+static enum led_brightness igb_led0_get(struct led_classdev *ldev)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led0);
+
+        return igb_led_get(adapter, 0);
+}
+
+static int igb_led1_set(struct led_classdev *ldev, enum led_brightness b)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led1);
+
+        igb_led_set(adapter, 1, b);
+        return 0;
+}
+
+static enum led_brightness igb_led1_get(struct led_classdev *ldev)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led1);
+
+        return igb_led_get(adapter, 1);
+}
+
+static int igb_led2_set(struct led_classdev *ldev, enum led_brightness b)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led2);
+
+        igb_led_set(adapter, 2, b);
+        return 0;
+}
+
+static enum led_brightness igb_led2_get(struct led_classdev *ldev)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led2);
+
+        return igb_led_get(adapter, 2);
+}
+
+static int igb_led3_set(struct led_classdev *ldev, enum led_brightness b)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led3);
+
+        igb_led_set(adapter, 3, b);
+        return 0;
+}
+
+static enum led_brightness igb_led3_get(struct led_classdev *ldev)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led3);
+
+        return igb_led_get(adapter, 3);
+}
+
+static int igb_led_setup(struct igb_adapter *adapter)
+{
+        /* Setup */
+        if( ! (i2c_leds & 0x08)) mutex_init(&adapter->led_mutex);
+        // INIT_WORK(&priv->led_work, iomon8_led_work );
+
+        if( ! (i2c_leds & 0x02)) {
+
+        char led0n[] = "igb_00:led0";
+        char led1n[] = "igb_00:led1";
+        char led2n[] = "igb_00:led2";
+        char led3n[] = "igb_00:led3";
+
+//        adapter->led0.name           = "igb_00:led0";
+        adapter->led0.name           = led0n;
+        adapter->led0.max_brightness = 1;
+//        adapter->led0.brightness_set = igb_led0_set;
+        adapter->led0.brightness_set_blocking = igb_led0_set;
+        adapter->led0.brightness_get = igb_led0_get;
+
+//        adapter->led1.name           = "igb_00:led1";
+        adapter->led1.name           = led1n;
+        adapter->led1.max_brightness = 1;
+        adapter->led1.brightness_set_blocking = igb_led1_set;
+        adapter->led1.brightness_get = igb_led1_get;
+
+//        adapter->led2.name           = "igb_00:led2";
+        adapter->led2.name           = led2n;
+        adapter->led2.max_brightness = 1;
+        adapter->led2.brightness_set_blocking = igb_led2_set;
+        adapter->led2.brightness_get = igb_led2_get;
+
+//        adapter->led3.name           = "igb_00:led3";
+        adapter->led3.name           = led3n;
+        adapter->led3.max_brightness = 1;
+        adapter->led3.brightness_set_blocking = igb_led3_set;
+        adapter->led3.brightness_get = igb_led3_get;
+
+
+        if( ! (i2c_leds & 0x04) && adapter->dipsw > 0 && adapter->dipsw < 100) {
+                snprintf(led0n, sizeof(led0n), "igb_%02d:led0", (unsigned int) adapter->dipsw );
+                snprintf(led1n, sizeof(led1n), "igb_%02d:led1", (unsigned int) adapter->dipsw );
+                snprintf(led2n, sizeof(led2n), "igb_%02d:led2", (unsigned int) adapter->dipsw );
+                snprintf(led3n, sizeof(led3n), "igb_%02d:led3", (unsigned int) adapter->dipsw );
+
+        }
+
+         if(adapter->i2c_dipsw) {
+                /* Register leds */
+                led_classdev_register(&adapter->pdev->dev, &adapter->led0);
+                led_classdev_register(&adapter->pdev->dev, &adapter->led1);
+                led_classdev_register(&adapter->pdev->dev, &adapter->led2);
+                led_classdev_register(&adapter->pdev->dev, &adapter->led3);
+         }
+        }
+
+        return 0;
+}
+
+//	return status;
+//}
+
+static void igb_led_destroy(struct igb_adapter *adapter)
+{
+        if(adapter->i2c_dipsw) {
+                led_classdev_unregister(&adapter->led0);
+                led_classdev_unregister(&adapter->led1);
+                led_classdev_unregister(&adapter->led2);
+                led_classdev_unregister(&adapter->led3);
+        }
+
+        if( ! (i2c_leds & 0x08)) mutex_destroy(&adapter->led_mutex);
+}
+
+                                                                                                                
+///////////////////////////// leds2
+
+static void igb_select_led2(struct igb_adapter *adapter, int led,
+                           u32 *mask, u32 *shift)
+{
+        switch (led) {
+        case 10:
+                *mask  = ~( 0x01 );
+                *shift = 0;
+                break;
+        case 11:
+                *mask  = ~( 0x02 );
+                *shift = 1;
+                break;
+        case 12:
+                *mask  = ~( 0x04 );
+                *shift = 2;
+                break;
+        case 13:
+                *mask  = ~( 0x08 );
+                *shift = 3;
+                break;
+        case 14:
+                *mask  = ~( 0x10 );
+                *shift = 4;
+                break;
+        case 15:
+                *mask  = ~( 0x20 );
+                *shift = 5;
+                break;
+        case 16:
+                *mask  = ~( 0x40 );
+                *shift = 6;
+                break;
+        case 17:
+                *mask  = ~( 0x80 );
+                *shift = 7;
+                break;
+        default:
+                *mask = *shift = 0;
+                dev_err(&adapter->pdev->dev, "Unknown led %d selected!", led);
+        }
+}
+
+void igb_led_set2(struct igb_adapter *adapter, int led, u16 brightness)
+{
+//        struct e1000_hw *hw = &adapter->hw;
+        u32 shift, mask, ledctl2;
+
+        if( brightness > 0 ) brightness = 1; else brightness = 0;
+
+        igb_select_led2(adapter, led, &mask, &shift);
+
+        if( ! (i2c_leds & 0x08)) mutex_lock(&adapter->led_mutex2);
+
+        ledctl2 = adapter->ledctl2;
+
+        ledctl2 &= mask;
+        ledctl2 |= brightness << shift;
+//      dev_err(&adapter->pdev->dev, "adapter->i2c_pca9557_19 = %02x, %02x, %02x, %02x", adapter->i2c_pca9557_19->addr, ledctl2, mask, shift);
+
+        adapter->ledctl2 = ledctl2;
+
+        if(adapter->i2c_pca9557_19->addr == 0x19)
+                i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, ~ledctl2);
+
+        if( ! (i2c_leds & 0x08)) mutex_unlock(&adapter->led_mutex2);
+}
+
+enum led_brightness igb_led_get2(struct igb_adapter *adapter, int led)
+{
+//        struct e1000_hw *hw = &adapter->hw;
+        u32 shift, mask, ledctl2;
+
+        igb_select_led2(adapter, led, &mask, &shift);
+
+//        if( ! (i2c_leds & 0x08)) mutex_lock(&adapter->led_mutex2);
+
+        ledctl2 = adapter->ledctl2;
+
+//        if( ! (i2c_leds & 0x08)) mutex_unlock(&adapter->led_mutex2);
+
+        return (ledctl2 & ~mask) >> shift;
+}
+
+static int igb_led10_set(struct led_classdev *ldev, enum led_brightness b)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led10);
+
+        igb_led_set2(adapter, 10, b);
+        return 0;
+}
+static int igb_led11_set(struct led_classdev *ldev, enum led_brightness b)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led11);
+
+        igb_led_set2(adapter, 11, b);
+        return 0;
+}
+static int igb_led12_set(struct led_classdev *ldev, enum led_brightness b)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led12);
+
+        igb_led_set2(adapter, 12, b);
+        return 0;
+}
+static int igb_led13_set(struct led_classdev *ldev, enum led_brightness b)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led13);
+
+        igb_led_set2(adapter, 13, b);
+        return 0;
+}
+static int igb_led14_set(struct led_classdev *ldev, enum led_brightness b)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led14);
+
+        igb_led_set2(adapter, 14, b);
+        return 0;
+}
+static int igb_led15_set(struct led_classdev *ldev, enum led_brightness b)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led15);
+
+        igb_led_set2(adapter, 15, b);
+        return 0;
+}
+static int igb_led16_set(struct led_classdev *ldev, enum led_brightness b)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led16);
+
+        igb_led_set2(adapter, 16, b);
+        return 0;
+}
+static int igb_led17_set(struct led_classdev *ldev, enum led_brightness b)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led17);
+
+        igb_led_set2(adapter, 17, b);
+        return 0;
+}
+
+static enum led_brightness igb_led10_get(struct led_classdev *ldev)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led10);
+
+        return igb_led_get2(adapter, 10);
+}
+
+static enum led_brightness igb_led11_get(struct led_classdev *ldev)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led11);
+
+        return igb_led_get2(adapter, 11);
+}
+
+static enum led_brightness igb_led12_get(struct led_classdev *ldev)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led12);
+
+        return igb_led_get2(adapter, 12);
+}
+
+static enum led_brightness igb_led13_get(struct led_classdev *ldev)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led13);
+
+        return igb_led_get2(adapter, 13);
+}
+
+static enum led_brightness igb_led14_get(struct led_classdev *ldev)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led14);
+
+        return igb_led_get2(adapter, 14);
+}
+
+static enum led_brightness igb_led15_get(struct led_classdev *ldev)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led15);
+
+        return igb_led_get2(adapter, 15);
+}
+
+static enum led_brightness igb_led16_get(struct led_classdev *ldev)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led16);
+
+        return igb_led_get2(adapter, 16);
+}
+
+static enum led_brightness igb_led17_get(struct led_classdev *ldev)
+{
+        struct igb_adapter *adapter = led_to_igb(ldev, led17);
+
+        return igb_led_get2(adapter, 17);
+}
+
+
+
+static int igb_led_setup2(struct igb_adapter *adapter)
+{
+        /* Setup */
+        if( ! (i2c_leds & 0x08)) mutex_init(&adapter->led_mutex2);
+        // INIT_WORK(&priv->led_work, iomon8_led_work );
+
+        if( ! (i2c_leds & 0x02)) {
+
+        char led10n[] = "igb_00:led10";
+        char led11n[] = "igb_00:led11";
+        char led12n[] = "igb_00:led12";
+        char led13n[] = "igb_00:led13";
+        char led14n[] = "igb_00:led14";
+        char led15n[] = "igb_00:led15";
+        char led16n[] = "igb_00:led16";
+        char led17n[] = "igb_00:led17";
+
+        adapter->led10.name           = led10n;
+        adapter->led10.max_brightness = 1;
+//        adapter->led10.brightness_set = igb_led10_set;
+        adapter->led10.brightness_set_blocking = igb_led10_set;
+        adapter->led10.brightness_get = igb_led10_get;
+
+        adapter->led11.name           = led11n;
+        adapter->led11.max_brightness = 1;
+        adapter->led11.brightness_set_blocking = igb_led11_set;
+        adapter->led11.brightness_get = igb_led11_get;
+
+        adapter->led12.name           = led12n;
+        adapter->led12.max_brightness = 1;
+        adapter->led12.brightness_set_blocking = igb_led12_set;
+        adapter->led12.brightness_get = igb_led12_get;
+
+        adapter->led13.name           = led13n;
+        adapter->led13.max_brightness = 1;
+        adapter->led13.brightness_set_blocking = igb_led13_set;
+        adapter->led13.brightness_get = igb_led13_get;
+
+        adapter->led14.name           = led14n;
+        adapter->led14.max_brightness = 1;
+        adapter->led14.brightness_set_blocking = igb_led14_set;
+        adapter->led14.brightness_get = igb_led14_get;
+
+        adapter->led15.name           = led15n;
+        adapter->led15.max_brightness = 1;
+        adapter->led15.brightness_set_blocking = igb_led15_set;
+        adapter->led15.brightness_get = igb_led15_get;
+
+        adapter->led16.name           = led16n;
+        adapter->led16.max_brightness = 1;
+        adapter->led16.brightness_set_blocking = igb_led16_set;
+        adapter->led16.brightness_get = igb_led16_get;
+
+        adapter->led17.name           = led17n;
+        adapter->led17.max_brightness = 1;
+        adapter->led17.brightness_set_blocking = igb_led17_set;
+        adapter->led17.brightness_get = igb_led17_get;
+
+
+        if( ! (i2c_leds & 0x04) && adapter->dipsw > 0 && adapter->dipsw < 100) {
+                snprintf(led10n, sizeof(led10n), "igb_%02d:led10", (unsigned int) adapter->dipsw );
+                snprintf(led11n, sizeof(led11n), "igb_%02d:led11", (unsigned int) adapter->dipsw );
+                snprintf(led12n, sizeof(led12n), "igb_%02d:led12", (unsigned int) adapter->dipsw );
+                snprintf(led13n, sizeof(led13n), "igb_%02d:led13", (unsigned int) adapter->dipsw );
+                snprintf(led14n, sizeof(led14n), "igb_%02d:led14", (unsigned int) adapter->dipsw );
+                snprintf(led15n, sizeof(led15n), "igb_%02d:led15", (unsigned int) adapter->dipsw );
+                snprintf(led16n, sizeof(led16n), "igb_%02d:led16", (unsigned int) adapter->dipsw );
+                snprintf(led17n, sizeof(led17n), "igb_%02d:led17", (unsigned int) adapter->dipsw );
+
+        }
+
+         if(adapter->i2c_pca9557_19) {
+                /* Register leds */
+                led_classdev_register(&adapter->pdev->dev, &adapter->led10);
+                led_classdev_register(&adapter->pdev->dev, &adapter->led11);
+                led_classdev_register(&adapter->pdev->dev, &adapter->led12);
+                led_classdev_register(&adapter->pdev->dev, &adapter->led13);
+                led_classdev_register(&adapter->pdev->dev, &adapter->led14);
+                led_classdev_register(&adapter->pdev->dev, &adapter->led15);
+                led_classdev_register(&adapter->pdev->dev, &adapter->led16);
+                led_classdev_register(&adapter->pdev->dev, &adapter->led17);
+         }
+        }
+
+        if(adapter->i2c_pca9557_19->addr == 0x19) {
+                i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, 0xff ); // all off, leds commom anode
+                i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 3, 0x00 ); // all output
+        }
+
+        return 0;
+}
+
+
+
+static void igb_led_destroy2(struct igb_adapter *adapter)
+{
+        if(adapter->i2c_pca9557_19) {
+                led_classdev_unregister(&adapter->led10);
+                led_classdev_unregister(&adapter->led11);
+                led_classdev_unregister(&adapter->led12);
+                led_classdev_unregister(&adapter->led13);
+                led_classdev_unregister(&adapter->led14);
+                led_classdev_unregister(&adapter->led15);
+                led_classdev_unregister(&adapter->led16);
+                led_classdev_unregister(&adapter->led17);
+        }
+
+        if( ! (i2c_leds & 0x08)) mutex_destroy(&adapter->led_mutex2);
+}
+///////////////////////////// leds2 end
+//////////// leds end
+                                                                                                                                                                        
+
+s32 igb_validate_nvm_checksum_octo(struct pci_dev *pdev, struct e1000_hw *hw)
+{
+        s32 ret_val = 0;
+        u16 checksum = 0;
+        u16 i, nvm_data;
+
+//      dev_warn(&pdev->dev, "NVM Checksum calculation... \n");
+
+        ret_val = hw->nvm.ops.read(hw, NVM_CHECKSUM_REG, 1, &nvm_data);
+        dev_warn(&pdev->dev, "NVM Checksum read: %04x \n", nvm_data);
+
+
+        for (i = 0; i < NVM_CHECKSUM_REG; i++) {
+                ret_val = hw->nvm.ops.read(hw, i, 1, &nvm_data);
+                if (ret_val) {
+                        DEBUGFUNC("NVM Read Error\n");
+                        goto out;
+                }
+                checksum += nvm_data;
+        }
+
+        dev_warn(&pdev->dev, "NVM Checksum calculated: %04x \n", (u16) checksum );
+        dev_warn(&pdev->dev, "NVM Checksum calculated: %04x \n", (u16) (NVM_SUM - checksum));
+
+
+        for (i = 0; i < (NVM_CHECKSUM_REG + 1); i++) {
+                ret_val = hw->nvm.ops.read(hw, i, 1, &nvm_data);
+                if (ret_val) {
+                        DEBUGFUNC("NVM Read Error\n");
+                        goto out;
+                }
+                checksum += nvm_data;
+        }
+
+        if (checksum != (u16) NVM_SUM) {
+                DEBUGFUNC("NVM Checksum Invalid\n");
+                ret_val = -E1000_ERR_NVM;
+                goto out;
+        }
+
+out:
+        return ret_val;
+}
+
+/*
+EE_LMKREG_BASE+0                0x4f "O"        // start
+EE_LMKREG_BASE+1                len             // data
+EE_LMKREG_BASE+2 + (len * 3)    0x6f "o"        // end
+
+
+// eeprom: led0,1,2,3 (ledD1,2,3,4) sysfs lmkreg+mask. lmkreg>R411 for mapping to sysfs. masklogic bit:AND/OR
+//   + eeprom adapter->sn offset 0,1,2,3
+//   + eeprom_ID {dipsw:0..15, fixed:16..31(-16)} offset 4
+//   + eeprom rtc_ait_utc 37 offset 5
+//   + eeprom lmkocxotemp 54 offset 6
+//   . eeprom map_led0{lmkregh 1b, lmkregl, regmask}
+//   . eeprom map_led1{lmkregh 1b, lmkregl, regmask}
+//   . eeprom map_led2{lmkregh 1b, lmkregl, regmask}
+//   . eeprom map_led3{lmkregh 1b, lmkregl, regmask}
+//   eeprom map_lmkregD12_D19 ledD12-D19 lmkreg mapping {lmkregh, lmkregl, regmask}
+*/
+// read LMK register config from eeprom
+//static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, u8 *len)
+//static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, intptr_t *len)
+static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len)
+{
+#define EE_SN_BASE 0x00 //32 bits 0x00-0x03
+#define EE_ID 0x04 // dipswitch ID
+#define EE_LEDMAP_BASE 0x07
+#define EE_LMKREG_BASE 0x10
+#define EE_DAC1_BASE 0x74 // 0x74-0x77
+#define EE_CDCEREG_BASE 0xa0
+   //struct i2c_client *i2c_eeprom = adapter->i2c_eeprom;
+   int res=-1;
+   int i = 0;
+   int err = 0;
+   int reg, reg_last = -1;
+        u8 reg_data[2];
+
+   adapter->map_led0 = (i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 0) & BIT(0)) ? 1<<8 : 0; //lmkregh (1b)
+   adapter->map_led0 += i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 1); //lmkregl (8b) 0x000-0x19b = R0-R411
+   adapter->map_led0_mask = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 2); // 5 unused + sys/fw + 1 invert + 1 and/or + 8 mask bits
+   adapter->map_led0_mask |= 1 << 9;
+
+   adapter->map_led1 = (i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 0) & BIT(1)) ? 1<<8 : 0; //lmkregh (1b)
+   adapter->map_led1 += i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 3); //lmkregl (8b) 0x000-0x19b = R0-R411
+   adapter->map_led1_mask = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 4); // 5 unused + sys/fw + 1 invert + 1 and/or + 8 mask bits
+   adapter->map_led1_mask |= 1 << 9;
+
+   adapter->map_led2 = (i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 0) & BIT(2)) ? 1<<8 : 0; //lmkregh (1b)
+   adapter->map_led2 += i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 5); //lmkregl (8b) 0x000-0x19b = R0-R411
+   adapter->map_led2_mask = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 6); // 5 unused + sys/fw + 1 invert + 1 and/or + 8 mask bits
+
+   adapter->map_led3 = (i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 0) & BIT(3)) ? 1<<8 : 0; //lmkregh (1b)
+   adapter->map_led3 += i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 7); //lmkregl (8b) 0x000-0x19b = R0-R411
+   adapter->map_led3_mask = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 8); // 5 unused + sys/fw + 1 invert + 1 and/or + 8 mask bits
+
+
+   res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_CDCEREG_BASE);
+   if (res != 0x4f /* O */)
+   {
+//        return -1;
+                dev_info(&adapter->pdev->dev, "%s (%d): abborting, cdce: %i\n", __FUNCTION__,__LINE__, res);
+   } else {
+//        len = (u8) i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_CDCEREG_BASE + 1 );//len = 1 for one cdcereg <regh,regl,val>
+        len = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_CDCEREG_BASE + 1 );//len = 1 for one cdcereg <regh,regl,val>
+        if( len > 31) {
+                dev_info(&adapter->pdev->dev, "%s (%d): abborting, invalid len (>31): %i\n", __FUNCTION__,__LINE__, len);
+                return -2;
+        }
+//        res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_CDCEREG_BASE + ((u8)len * 2 +2) );
+        res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_CDCEREG_BASE + (len * 2 +2) );
+        if( res != 0x6f /* o */) return -5;
+//        else dev_info(&adapter->pdev->dev, "%s (%d): Found CDCE block @ 0x%04x-0x%04x\n", __FUNCTION__,__LINE__, EE_CDCEREG_BASE, EE_CDCEREG_BASE + ((u8)len * 2 +2));
+        else dev_info(&adapter->pdev->dev, "%s (%d): Found CDCE block @ 0x%04x-0x%04x\n", __FUNCTION__,__LINE__, EE_CDCEREG_BASE, EE_CDCEREG_BASE + (len * 2 +2));
+
+
+//        for( i=0+2; i<((u8)len * 2 +2) ; i+=2 ) {
+        for( i=0+2; i<(len * 2 +2) ; i+=2 ) {
+                data[i+0] = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_CDCEREG_BASE + i+0); //Register LSB
+                data[i+1] = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_CDCEREG_BASE + i+1); //Register value
+                reg = data[i+0];
+                dev_info(&adapter->pdev->dev, "%s (%d): R%i = value 0x%02x\n", __FUNCTION__,__LINE__, reg, data[i+1]);
+                if( reg > 0x1f) {
+                        dev_info(&adapter->pdev->dev, "%s (%d): abborting, invalid register (reg > 0x1f) reg=%i\n", __FUNCTION__,__LINE__, reg );
+                        return -3;
+                }
+//                if( reg <= reg_last) {
+//                        dev_info(&adapter->pdev->dev, "%s (%d): abborting, invalid register, same twice or not ascending reg %i<=%i \n", __FUNCTION__,__LINE__, reg, reg_last );
+//                        return -4;
+//                } else
+			reg_last = reg;
+
+
+//#define CDCE925_I2C_COMMAND_BLOCK_TRANSFER      0x00
+#define CDCE925_I2C_COMMAND_BYTE_TRANSFER       0x80
+        /* First byte is command code */
+//      reg_data[0] = CDCE925_I2C_COMMAND_BYTE_TRANSFER | ((u8 *)data)[0];
+//      reg_data[1] = ((u8 *)data)[1];
+        reg_data[0] = CDCE925_I2C_COMMAND_BYTE_TRANSFER | data[i+0];
+        reg_data[1] = data[i+1];
+
+                if(adapter->i2c_cdce813) res = i2c_master_send(adapter->i2c_cdce813, reg_data, 2);
+
+                res = 0;
+                if (res < 0) { err++; continue; }
+        }
+//        if( (((u8) len )/2 == i/2) || (!err))
+        if( (len/2 == i/2) || (!err))
+                dev_info(&adapter->pdev->dev, "%s (%d): loaded %i register%s\n", __FUNCTION__,__LINE__, i/2, i/2 > 1 ? "s" : "");
+        else
+//                dev_info(&adapter->pdev->dev, "%s (%d): error loading %i registers, counted %i, bus errors %i\n", __FUNCTION__,__LINE__, ((u8) len )/2, i/2, err);
+                dev_info(&adapter->pdev->dev, "%s (%d): error loading %i registers, counted %i, bus errors %i\n", __FUNCTION__,__LINE__,  len /2, i/2, err);
+   }
+
+
+   reg_last = 0;
+   res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LMKREG_BASE);
+   if (res != 0x4f /* O */)
+   {
+        dev_info(&adapter->pdev->dev, "%s (%d): abborting, LMK eeprom load: %i\n", __FUNCTION__,__LINE__, res);
+//        return -1;
+   } else {
+        len = (u8) i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LMKREG_BASE + 1 );//len = 1 for one lmkreg <regh,regl,val>
+        if(len > 33) {
+                dev_info(&adapter->pdev->dev, "%s (%d): abborting, invalid len (>33): %i\n", __FUNCTION__,__LINE__, len);
+                return -6;
+        }
+
+//        res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LMKREG_BASE + ((u8)len * 3 +2) );
+        res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LMKREG_BASE + (len * 3 +2) );
+        if( res != 0x6f /* o */) return -7;
+//        else dev_info(&adapter->pdev->dev, "%s (%d): Found LMK block @ 0x%04x-0x%04x\n", __FUNCTION__,__LINE__, EE_LMKREG_BASE, EE_LMKREG_BASE + ((u8)len * 3 +2));
+        else dev_info(&adapter->pdev->dev, "%s (%d): Found LMK block @ 0x%04x-0x%04x\n", __FUNCTION__,__LINE__, EE_LMKREG_BASE, EE_LMKREG_BASE + ( len * 3 +2) );
+//              dev_info(&adapter->pdev->dev, "%s (%d): Found LMK block trailer @ 0x%04x\n", __FUNCTION__,__LINE__, EE_LMKREG_BASE + ((u8)len * 3 +2));
+
+
+//        for( i=0+2; i<((u8)len * 3 +2) ; i+=3 ) {
+        for( i=0+2; i<(len * 3 +2) ; i+=3 ) {
+                data[i+0] = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LMKREG_BASE + i+0); //Register MSB
+                data[i+1] = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LMKREG_BASE + i+1); //Register LSB
+                data[i+2] = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LMKREG_BASE + i+2); //Register value
+                reg = ((data[i+0] << 8) + data[i+1]);
+                dev_info(&adapter->pdev->dev, "%s (%d): R%i = value 0x%02x\n", __FUNCTION__,__LINE__, reg, data[i+2]);
+                if( reg > 352) {
+                        dev_info(&adapter->pdev->dev, "%s (%d): abborting, invalid register (reg > 352) reg=%i\n", __FUNCTION__,__LINE__, reg );
+                        return -8;
+                }
+
+//                if( reg <= reg_last) {
+//                        dev_info(&adapter->pdev->dev, "%s (%d): abborting, invalid register, same twice or not ascending reg %i<=%i \n", __FUNCTION__,__LINE__, reg, reg_last );
+//                        return -9;
+//                } else
+			reg_last = reg;
+
+                res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, data[i+0], data[i+1] | (data[i+2] << 8));
+                if (res < 0) { err++; continue; }
+
+        }
+
+//        if( (((u8) len )/3 == i/3) || (!err))
+        if( (len /3 == i/3) || (!err))
+                dev_info(&adapter->pdev->dev, "%s (%d): loaded %i register%s\n", __FUNCTION__,__LINE__, i/3, i/3 > 1 ? "s" : "");
+        else
+//                dev_info(&adapter->pdev->dev, "%s (%d): error loading %i registers, counted %i, bus errors %i\n", __FUNCTION__,__LINE__, ((u8) len )/3, i/3, err);
+                dev_info(&adapter->pdev->dev, "%s (%d): error loading %i registers, counted %i, bus errors %i\n", __FUNCTION__,__LINE__, len/3, i/3, err);
+
+//        res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x00, (0x0C) | (0x9B << 8));
+//        usleep_range(10000, 20000);
+//        res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x00, (0x0C) | (0x1B << 8));
+   }//lmk block
+
+//dac1
+        res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE);
+        if (res != 0x4f) return -1;
+
+        len = 1;
+        res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + ((u8)len * 2 +1) );
+        if( res != 0x6f /* o */) return -7;
+        else {
+                int dac1val;
+                dev_info(&adapter->pdev->dev, "%s (%d): Found DAC1 block @ 0x%04x\n", __FUNCTION__,__LINE__, EE_DAC1_BASE);
+                dac1val = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + 1 );
+                dac1val += i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + 2 ) << 8;
+                if(dac1val < 8 || dac1val > 4090) {
+                        dev_info(&adapter->pdev->dev, "%s (%d): DAC1 value out of range (%d)\n", __FUNCTION__,__LINE__, dac1val);
+                        return -3;
+                } else {
+                        adapter->dac1val = dac1val;
+                        dev_info(&adapter->pdev->dev, "%s (%d): set DAC1: %d\n", __FUNCTION__,__LINE__, dac1val);
+                        dacval = adapter->dac1val;
+                        mcp4725_set_value(adapter );
+                }
+        }//dac1
+
+
+
+
+   return 0;
+}
+
+
+
+
+
 
 #endif /* HAVE_I2C_SUPPORT */
 /**
@@ -1877,10 +3606,13 @@ void igb_down(struct igb_adapter *adapter)
 
 	adapter->flags &= ~IGB_FLAG_NEED_LINK_UPDATE;
 
-	timer_delete_sync(&adapter->watchdog_timer);
+	del_timer_sync(&adapter->watchdog_timer);
+//	timer_delete_sync(&adapter->watchdog_timer);
 	if (adapter->flags & IGB_FLAG_DETECT_BAD_DMA)
-		timer_delete_sync(&adapter->dma_err_timer);
-	timer_delete_sync(&adapter->phy_info_timer);
+		del_timer_sync(&adapter->dma_err_timer);
+//		timer_delete_sync(&adapter->dma_err_timer);
+	del_timer_sync(&adapter->phy_info_timer);
+//	timer_delete_sync(&adapter->phy_info_timer);
 
 	/* record the stats before reset*/
 	igb_update_stats(adapter);
@@ -2027,6 +3759,7 @@ void igb_reset(struct igb_adapter *adapter)
 	else
 		fc->low_water = 0;
 
+	fc->low_water = fc->high_water - 16;
 	fc->pause_time = 0xFFFF;
 	fc->send_xon = 1;
 	fc->current_mode = fc->requested_mode;
@@ -2707,6 +4440,9 @@ static int igb_probe(struct pci_dev *pdev,
 	static int global_quad_port_a; /* global quad port a indication */
 	int err, pci_using_dac;
 	static int cards_found;
+        s32 part_xtalcal, part_oscillatortype = -1, part_boardfeatures = 0;
+        const struct firmware *firmware;
+
 #ifdef HAVE_NDO_SET_FEATURES
 #ifdef HAVE_RHEL6_NET_DEVICE_OPS_EXT
 	u32 hw_features;
@@ -2829,6 +4565,8 @@ static int igb_probe(struct pci_dev *pdev,
 	igb_set_ethtool_ops(netdev);
 #ifdef HAVE_TX_TIMEOUT
 	netdev->watchdog_timeo = 5 * HZ;
+//              dev_info(&pdev->dev,
+//                      "netdev->watchdog_timeo=%i.\n", netdev->watchdog_timeo);
 #endif
 
 	strscpy(netdev->name, pci_name(pdev), sizeof(netdev->name));
@@ -3001,12 +4739,50 @@ static int igb_probe(struct pci_dev *pdev,
 	e1000_reset_hw(hw);
 
 	/* make sure the NVM is good */
-	if (e1000_validate_nvm_checksum(hw) < 0) {
-		dev_err(pci_dev_to_dev(pdev),
-			"The NVM Checksum Is Not Valid\n");
-		err = -EIO;
-		goto err_eeprom;
-	}
+//	if (e1000_validate_nvm_checksum(hw) < 0) {
+//		dev_err(pci_dev_to_dev(pdev),
+//			"The NVM Checksum Is Not Valid\n");
+//		err = -EIO;
+//		goto err_eeprom;
+//	}
+        /* make sure the NVM is good , i211/i210 parts can have special NVM
+         * that doesn't contain a checksum
+         */
+        switch (hw->mac.type) {
+        case e1000_i210:
+                if (ignore_nvm_checksum )
+                        igb_validate_nvm_checksum_octo(pdev, hw);
+		fallthrough;
+        case e1000_i211:
+                if (e1000_get_flash_presence_i210(hw)) {
+                        if (hw->nvm.ops.validate(hw) < 0) {
+                                if (ignore_nvm_checksum) {
+                                        dev_warn(&pdev->dev,
+                                        "The NVM Checksum Is Not Valid\n");
+                                } else {
+                                        dev_err(&pdev->dev,
+                                        "The NVM Checksum Is Not Valid\n");
+                                        err = -EIO;
+                                        goto err_eeprom;
+                                }
+                        }
+                }
+                break;
+        default:
+                if (hw->nvm.ops.validate(hw) < 0) {
+                        if (ignore_nvm_checksum) {
+                                dev_warn(&pdev->dev,
+                                        "The NVM Checksum Is Not Valid\n");
+                        } else {
+                                dev_err(&pdev->dev,
+                                        "The NVM Checksum Is Not Valid\n");
+                                err = -EIO;
+                                goto err_eeprom;
+                        }
+                }
+                break;
+        }
+
 
 	/* copy the MAC address out of the NVM */
 	if (e1000_read_mac_addr(hw))
@@ -3051,6 +4827,8 @@ static int igb_probe(struct pci_dev *pdev,
 	INIT_WORK(&adapter->watchdog_task, igb_watchdog_task);
 	if (adapter->flags & IGB_FLAG_DETECT_BAD_DMA)
 		INIT_WORK(&adapter->dma_err_task, igb_dma_err_task);
+        INIT_WORK(&adapter->dpll_task, igb_dpll_task);
+        INIT_WORK(&adapter->vcodac_task, vcodac_task);
 
 	/* Initialize link properties that are user-changeable */
 	adapter->fc_autoneg = true;
@@ -3173,11 +4951,11 @@ static int igb_probe(struct pci_dev *pdev,
 
 #ifdef HAVE_I2C_SUPPORT
 	/* Init the I2C interface */
-	err = igb_init_i2c(adapter);
-	if (err) {
-		dev_err(&pdev->dev, "failed to init i2c interface\n");
-		goto err_eeprom;
-	}
+//	err = igb_init_i2c(adapter);
+//	if (err) {
+//		dev_err(&pdev->dev, "failed to init i2c interface\n");
+//		goto err_eeprom;
+//	}
 #endif /* HAVE_I2C_SUPPORT */
 
 	/* let the f/w know that the h/w is now under the control of the
@@ -3206,6 +4984,267 @@ static int igb_probe(struct pci_dev *pdev,
 	}
 
 #endif
+
+				
+        if ((hw->mac.type >= e1000_i210 ||
+             e1000_get_flash_presence_i210(hw))) {
+//              ret_val = igb_read_part_xtalcal3(hw, &part_xtalcal, &part_oscillatortype, &part_boardfeatures);
+                ret_val = igb_read_part_xtalcal4(hw, &part_xtalcal, &part_oscillatortype, &part_boardfeatures);
+                if ((part_boardfeatures & 0xff00) == 0xff00) part_boardfeatures &= 0x00ff;
+
+
+                // part_boardfeatures valid if osctype valid
+                if(part_oscillatortype >= 0 && part_oscillatortype < 8) {
+                        adapter->part_boardfeatures = part_boardfeatures;
+                }
+        } else {
+                ret_val = -E1000_ERR_INVM_VALUE_NOT_FOUND;
+        }
+
+//        dev_info(&pdev->dev, "NVM xtalcal: freq %s%i ppb, type %s (0x%08x 0x%02x)\n", part_xtalcal>0 ? "+" : "", part_xtalcal,
+        dev_info(pci_dev_to_dev(pdev), "NVM xtalcal: freq %s%i ppb, type %s (0x%08x 0x%02x)\n", part_xtalcal>0 ? "+" : "", part_xtalcal,
+                part_oscillatortype == 0 ? "crystal (HC49)" : 
+                part_oscillatortype == 1 ? "tcxo" : 
+                part_oscillatortype == 2 ? "ocxo" : 
+                part_oscillatortype == 3 ? "vcxo" : 
+                part_oscillatortype == 4 ? "vc-tcxo" : 
+                part_oscillatortype == 5 ? "vc-ocxo" : 
+                part_oscillatortype == 6 ? "tcxo DPLL" : 
+                part_oscillatortype == 7 ? "ocxo DPLL" : 
+                "unknown (uncalibrated)",
+                part_xtalcal, part_oscillatortype);
+
+/*
+offset 0x265 part_boardfeatures mask
+
+0x00 reserved, no features
+0x01 DAC1 (VCO)
+0x02 VCO
+0x04 RTC
+0x08 ADC/DAC2 (ADS1115/MCP4725)
+0x10 GPI2 (PCF8574)
+0x20 Temp sensor (TMP102)
+0x40 eeprom
+0x80 ->format2 @ offset 0x266-0x269
+0xFF reserved, no features
+
+offset 0x266-0x269 part_boardfeatures(16b) format2 mask
+0x266 0x01 cdce813
+0x266 0x02 lmk05318B
+0x266 0x04 TMP102 ocxo
+0x266 0x08 WDT
+0x266 0x10
+0x266 0x20
+0x266 0x40
+0x266 0x80
+*/
+//      if(part_boardfeatures != 0xff || i2c_probe ) dev_info(&pdev->dev, "NVM board features: 0x%02x\n", part_boardfeatures);
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+        if(i2c_probe >= 0) {
+                adapter->part_boardfeatures = part_boardfeatures = i2c_probe;
+        }
+        if( ((part_boardfeatures & 0xff) != 0xff && (part_boardfeatures & 0xff) != 0x00) || hw->mac.type == e1000_i211) {
+
+                /* Init the I2C interface */
+                err = igb_init_i2c(adapter);
+                if (err) {
+                        dev_err(&pdev->dev, "failed to init i2c interface\n");
+                        goto err_eeprom;
+                }
+
+                if( ((part_boardfeatures & 0xff) != 0xff && (part_boardfeatures & 0xff) != 0x00)  )
+//                        dev_info(&pdev->dev, "NVM board features (0x%04x): %s%s%s%s%s%s%s%s",
+                        dev_info(pci_dev_to_dev(pdev), "NVM board features (0x%04x): %s%s%s%s%s%s%s%s %s%s%s%s%s",
+                        part_boardfeatures,
+                        part_boardfeatures & 0x01 ? "DAC1 " : "",
+                        part_boardfeatures & 0x02 ? "VCO " : "",
+                        part_boardfeatures & 0x04 ? "RTC " : "",
+                        part_boardfeatures & 0x08 ? "ADC/DAC2 " : "",
+                        part_boardfeatures & 0x10 ? "GPI2 " : "",
+                        part_boardfeatures & 0x20 ? "TMP " : "",
+                        part_boardfeatures & 0x40 ? "EEPROM " : "",
+                        part_boardfeatures & 0x80 ? "0x80 " : "",
+
+                        part_boardfeatures & 0x0100 ? "CDCE " : "",
+                        part_boardfeatures & 0x0200 ? "DPLL " : "",
+                        part_boardfeatures & 0x0400 ? "OCXO-TMP " : "",
+                        part_boardfeatures & 0x0800 ? "WDT " : "",
+                        part_boardfeatures & 0x1000 ? "GNSS " : ""
+                );
+
+        }
+
+        if( adapter->i2c_rtc && (part_boardfeatures & 0x04) && rtc_tv_sec) {
+                if(adapter->i2c_eeprom) adapter->rtc_utc_tai = i2c_smbus_read_byte_data(adapter->i2c_eeprom, 5);
+                if(adapter->rtc_utc_tai > 0 && adapter->rtc_utc_tai < 50) rtc_tv_sec += adapter->rtc_utc_tai;
+                else adapter->rtc_utc_tai = 0;
+
+//                wr32(E1000_SYSTIMR, 0); //fraqtional ns
+                E1000_WRITE_REG(hw, E1000_SYSTIMR, 0); //fraqtional ns
+//                wr32(E1000_SYSTIML, (u32)rtc_tv_nsec);
+                E1000_WRITE_REG(hw, E1000_SYSTIML, (u32)rtc_tv_nsec);
+//                wr32(E1000_SYSTIMH, (u32)rtc_tv_sec);
+                E1000_WRITE_REG(hw, E1000_SYSTIMH, (u32)rtc_tv_sec);
+//                dev_info(&pdev->dev, "RTC: PHC initialized time=%lld.%lld +%i%s", rtc_tv_sec, rtc_tv_nsec, adapter->rtc_utc_tai, adapter->rtc_utc_tai ? " (UTC/TAI corrected)" : "(UTC)" );
+                dev_info(pci_dev_to_dev(pdev), "RTC: PHC initialized time=%lld.%lld +%i%s", rtc_tv_sec, rtc_tv_nsec, adapter->rtc_utc_tai, adapter->rtc_utc_tai ? " (UTC/TAI corrected)" : "(UTC)" );
+        }
+
+                                                                                
+        if( part_boardfeatures & 0x0200 && adapter->i2c_lmk05318b ) {
+                char fwname[200];
+                u8 res, lmkregs_old[512];
+		int i, rNVMCRCERR, rNVMSCRC, rNVMLCRC;
+
+                // read OTP eeprom
+                for (i = 0; i <= 411; i++) {
+                        if(adapter->i2c_pca9557_19) i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, ~0x04);
+                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, i >> 8, i & 0x00ff );
+                        if (res < 0) {err |= 0x80; continue;}
+                        lmkregs_old[i] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+                        if(adapter->i2c_pca9557_19) i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, ~0x02);
+                }
+
+//                dev_info(&pdev->dev, "LMK05318 REVID: 0x%02X, PARTID: 0x%08X, EEREV: 0x%02x, build:#%02d\n", lmkregs_old[3], (lmkregs_old[4]<<24 | lmkregs_old[5]<<16 | lmkregs_old[6]<<8 | lmkregs_old[7]), lmkregs_old[11], lmkregs_old[156] );
+                dev_info(pci_dev_to_dev(pdev), "LMK05318 REVID: 0x%02X, PARTID: 0x%08X, EEREV: 0x%02x, build:#%02d\n", lmkregs_old[3], (lmkregs_old[4]<<24 | lmkregs_old[5]<<16 | lmkregs_old[6]<<8 | lmkregs_old[7]), lmkregs_old[11], lmkregs_old[156] );
+
+                snprintf(fwname, sizeof(fwname), "%s-%02d%s", LMK05318_HEXREGVAL_FILE, (unsigned int) adapter->dipsw, ".txt" );
+//                dev_info(&pdev->dev, "Loading Texas Instruments TICS Pro firmware (ID:%02d) %s-%02d%s\n", (unsigned int) adapter->dipsw, LMK05318_HEXREGVAL_FILE, (unsigned int) adapter->dipsw, ".txt" );
+                dev_info(pci_dev_to_dev(pdev), "Loading Texas Instruments TICS Pro firmware (ID:%02d) %s-%02d%s\n", (unsigned int) adapter->dipsw, LMK05318_HEXREGVAL_FILE, (unsigned int) adapter->dipsw, ".txt" );
+
+                err = request_firmware(&firmware, fwname, &pdev->dev);
+                if (err) {
+                        snprintf(fwname, sizeof(fwname), "%s%s", LMK05318_HEXREGVAL_FILE, ".txt" );
+                        err = request_firmware(&firmware, fwname, &pdev->dev);
+                        if (err) {
+                                //int i, rNVMCRCERR, rNVMSCRC, rNVMLCRC;
+
+                                // checking that the NVMCRCERR (R157[5]) = 0, and that NVMSCRC (R155) matches NVMLCRC (R158). details R158 description in the programming manual
+                                i = 157;//rNVMCRCERR
+                                i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, i >> 8, i & 0x00ff );
+                                rNVMCRCERR = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+
+                                i = 155;//rNVMSCRC
+                                i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, i >> 8, i & 0x00ff );
+                                rNVMSCRC = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+
+                                i = 158;//rNVMLCRC
+                                i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, i >> 8, i & 0x00ff );
+                                rNVMLCRC = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+                                dev_warn(&pdev->dev, "request_firmware failed, defaults loaded from OTP. NVMCRC:%s, NVMSCRC:0x%02x NVMLCRC:0x%02x\n", rNVMCRCERR & 0x20 ? "ERR" : "OK", rNVMSCRC, rNVMLCRC);
+			}
+                }
+
+                if(!err) {
+                        // fw -> i2c uploader
+                                                                                
+        int regnamenum = 0;
+        int reghreglregv = 0;
+        int fwlines = 0;
+        int j=0;
+        char parse_buffer[25];
+        char pchar;
+        int regmax = 0;
+
+        //u16 lmkregi;
+        //u8 lmkregs[512], res;
+//      u8 res, lmkregs_old[512];
+
+        if(adapter->i2c_pca9557_19) {
+                i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 3, 0x00 ); // all output
+                i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, ~0x02);
+        }
+
+        // OTP eeprom sanity check and version information
+        if( !(lmkregs_old[3] == 0x11 || lmkregs_old[3] == 0x22 || lmkregs_old[3] == 0x32 || lmkregs_old[3] == 0x42) ) err |= 0x40;
+
+        // parse and upload firmware differences
+        for (i = 0; i <= firmware->size; i++) {
+                if(adapter->i2c_pca9557_19) i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, ~0x20);
+                if ((u8) firmware->data[i] == 0x52) j = 0;
+                else if (firmware->data[i] == 0x0a || firmware->data[i] == 0x0d) {
+                        parse_buffer[++j] = '\0';
+                        if(  (strlen(parse_buffer) < 11) || (strlen(parse_buffer) > 13) ) err |= 0x20;
+                        sscanf(parse_buffer, "R%d\t0x%06X", &regnamenum, &reghreglregv );
+                        //dev_info(&pdev->dev, "R%d\t0x%06X  strlen=%d reg:%d=%d addrh=0x%02X addrl=0x%02X value=0x%02X\n", regnamenum, reghreglregv, strlen(parse_buffer), regnamenum, reghreglregv>>8, reghreglregv >> 16, reghreglregv>>8 & 0x00ff, reghreglregv & 0x0000ff);
+                        // i2c write
+                        if(lmkregs_old[regnamenum] != (reghreglregv & 0x0000ff)) {
+//                                dev_info(&pdev->dev, "[LFW] R%d\t0x%06X \tstrlen=%d reg:%d=%d addrh=0x%02X addrl=0x%02X value=0x%02X (old 0x%02X)\n", regnamenum, reghreglregv, strlen(parse_buffer), regnamenum, reghreglregv>>8, reghreglregv >> 16, reghreglregv>>8 & 0x00ff, reghreglregv & 0x0000ff, lmkregs_old[regnamenum]);
+                                dev_info(pci_dev_to_dev(pdev), "[LFW] R%d\t0x%06X \tstrlen=%ld reg:%d=%d addrh=0x%02X addrl=0x%02X value=0x%02X (old 0x%02X)\n", regnamenum, reghreglregv, strlen(parse_buffer), regnamenum, reghreglregv>>8, reghreglregv >> 16, reghreglregv>>8 & 0x00ff, reghreglregv & 0x0000ff, lmkregs_old[regnamenum]);
+                                res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, reghreglregv >> 16, (reghreglregv>>8 & 0x00ff) | ((reghreglregv & 0x0000ff) << 8));
+                                if (res < 0) {err |= 0x80; continue;}
+                        //} else {
+                        //      dev_info(&pdev->dev, "[OTP] R%d\t0x%06X  strlen=%d reg:%d=%d addrh=0x%02X addrl=0x%02X value=0x%02X\n", regnamenum, reghreglregv, strlen(parse_buffer), regnamenum, reghreglregv>>8, reghreglregv >> 16, reghreglregv>>8 & 0x00ff, reghreglregv & 0x0000ff);
+                        }
+                        if(adapter->i2c_pca9557_19) i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, ~0x40);
+
+                        j = 0;
+                        memset(parse_buffer, 0, 25);
+                        fwlines++;
+                        if(regmax <= regnamenum) regmax = regnamenum;
+                }
+
+                parse_buffer[j++] = firmware->data[i];
+                pchar = (char) parse_buffer[j];
+                // sanity checks
+                if( 1 /* ignorechecks == 0 */ ) {
+                        if( j > 25 ) err |= 0x01;
+                        if( fwlines > 450) err |= 0x02;
+                        if( regnamenum != reghreglregv>>8) err |= 0x04;
+//                      if( ! (parse_buffer[j] == 9 || parse_buffer[j] == 0x52 || parse_buffer[j] == 0xd || parse_buffer[j] == 0xa || parse_buffer[j] == 0x78 || (parse_buffer[j] >= 0x30 && parse_buffer[j] <= 0x39)) ) err |= 0x08;
+                        //if( ! (pchar == 0x09 || pchar == 0x52 || pchar == 0x0d || pchar == 0x0A || pchar == 0x78 || (pchar >= 0x30 && pchar <= 0x39)) ) err |= 0x08;
+                        if(regmax > regnamenum) err |= 0x10;
+                        if( regnamenum == 3 && ! ( (reghreglregv & 0xff) == 0x11 || (reghreglregv & 0xff) == 0x22 || (reghreglregv & 0xff) == 0x32 || (reghreglregv & 0xff) == 0x42) ) err |= 0x40;
+                        if(err) {
+                                dev_err(&pdev->dev, "LMK05318 error corrupt HexRegisterValues file err=0x%02X ( line=%d, col=%d, i=%d )\n", err, fwlines, j+1, i);
+                                dev_err(&pdev->dev, "line %d: \"R%d\t0x%06X\"  parsed REG:%d/%d AddrH=0x%02X AddrL=0x%02X Value=0x%02X\n", fwlines, regnamenum, reghreglregv, regnamenum, reghreglregv>>8, reghreglregv >> 16, reghreglregv>>8 & 0x00ff, reghreglregv & 0x0000ff);
+                                break;
+                        }
+                }
+        }
+
+        parse_buffer[++j] = '\0';
+//      dev_info(&pdev->dev, "igb lmk05318 - fwlines=%d, i=%d, j=%d\n", fwlines, i, j);
+//      dev_info(&pdev->dev, "R%d\t0x%06X  strlen=%d reg:%d=%d addrl=0x%02X addrh=0x%02X value=0x%02X\n", regnamenum, reghreglregv, strlen(parse_buffer), regnamenum, reghreglregv>>8, reghreglregv >> 16, reghreglregv>>8 & 0x00ff, reghreglregv & 0x0000ff);
+
+        if(adapter->i2c_pca9557_19) i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, (u8) ~0x80);
+        res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x00, (0x0C) | (0x9B << 8));
+        usleep_range(10000, 20000);
+        res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x00, (0x0C) | (0x1B << 8));
+        if(adapter->i2c_pca9557_19) i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, ~0x00);
+
+                                                                                
+                        if(!err) dev_info(pci_dev_to_dev(pdev), "LMK05318 succesfully loaded firmware size=%d bytes, fwregisters=%d, i=%d, j=%d\n", (int)firmware->size, fwlines, i-1, j );
+                        release_firmware(firmware);
+                }
+
+                if(adapter->i2c_eeprom) dev_info(pci_dev_to_dev(pdev), "%s (%d): eeprom @0x%02x\n", __FUNCTION__,__LINE__, adapter->i2c_eeprom->addr );
+
+                // read eeprom LMK register/values
+                if( (part_boardfeatures & 0x40) && adapter->i2c_eeprom && lmkreg != 2) {
+                        u32 eebuf[256];
+                        int len;
+//                        int res = read_eeprom_lmk(adapter, eebuf, &len);
+                        int res = read_eeprom_lmk(adapter, eebuf, len);
+                        dev_info(pci_dev_to_dev(pdev), "%s (%d): eeprom fwload res: %i\n", __FUNCTION__,__LINE__, res);
+                }
+
+        }
+
+//HexRegisterValues
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// subsystem_device_id
+// subsystem_vendor_id
+
+        adapter->doubleedge = doubleedge;
+
+        if (ret_val || xtalcal!=0)
+                part_xtalcal = xtalcal;
+        adapter->xtalcal = part_xtalcal;
+
+
 #ifdef HAVE_PTP_1588_CLOCK
 	/* do hw tstamp init after resetting */
 	igb_ptp_init(adapter);
@@ -3224,11 +5263,62 @@ static int igb_probe(struct pci_dev *pdev,
 		  (hw->mac.type == e1000_i354) ? "integrated" : "unknown"));
 	netdev_info(netdev, "MAC: %pM\n", netdev->dev_addr);
 
-	ret_val = e1000_read_pba_string(hw, pba_str, E1000_PBANUM_LENGTH);
-	if (ret_val)
-		strcpy(pba_str, "Unknown");
-	dev_info(pci_dev_to_dev(pdev), "%s: PBA No: %s\n", netdev->name,
-		 pba_str);
+
+// adjfine
+//              igc_ptp_adjfine_i225(struct ptp_clock_info *ptp, long scaled_ppm)
+// from testptp.c - long ppb_to_scaled_ppm(int ppb)
+if (adapter->xtalcal) {
+	long scaled_ppm;
+        int neg_adj;
+        u64 rate;
+        u32 inca;
+#define INCVALUE_MASK           0x7fffffff
+#define ISGN                    0x80000000
+        printk("%s (%d): PHC initial freq offset: %i ppb\n",__FUNCTION__,__LINE__, adapter->xtalcal );
+//        long scaled_ppm = (adapter->xtalcal << 16) / 1000; // possible overflow
+        scaled_ppm = (adapter->xtalcal / 1000) << 16; // truncation
+//        long scaled_ppm = (long) (adapter->xtalcal * 65.536); // SSE compiler error
+
+        if ( (adapter->xtalcal > 0 && adapter->xtalcal < 30000) ||
+		(adapter->xtalcal < 0 && adapter->xtalcal > -30000))
+			scaled_ppm = (adapter->xtalcal << 16) / 1000;
+        neg_adj = 0;
+
+        if (scaled_ppm < 0) {
+                neg_adj = 1;
+                scaled_ppm = -scaled_ppm;
+        }
+        rate = scaled_ppm;
+        rate <<= 13;
+        rate = div_u64(rate, 15625);
+
+        inca = rate & INCVALUE_MASK;
+        if (neg_adj)
+                inca |= ISGN;
+
+        E1000_WRITE_REG(hw, E1000_TIMINCA, inca);
+}
+// adjfine end
+
+//	ret_val = e1000_read_pba_string(hw, pba_str, E1000_PBANUM_LENGTH);
+//	if (ret_val)
+//		strcpy(pba_str, "Unknown");
+//	dev_info(pci_dev_to_dev(pdev), "%s: PBA No: %s\n", netdev->name,
+//		 pba_str);
+        if ((hw->mac.type >= e1000_i210 ||
+             e1000_get_flash_presence_i210(hw))) {
+                ret_val = e1000_read_pba_string(hw, pba_str,
+                                               E1000_PBANUM_LENGTH);
+        } else {
+                ret_val = -E1000_ERR_INVM_VALUE_NOT_FOUND;
+        }
+
+        if (ret_val)
+                strcpy(pba_str, "Unknown");
+        dev_info(pci_dev_to_dev(pdev), "%s: PBA No: %s, xtalcal: %s%i ppb, subVID=%04x, subDID=%04x\n",
+		netdev->name, pba_str, part_xtalcal>0 ? "+" : "",
+		part_xtalcal, hw->subsystem_vendor_id, hw->subsystem_device_id);
+
 
 	/* Initialize the thermal sensor on i350 devices. */
 	if (hw->mac.type == e1000_i350) {
@@ -3305,12 +5395,17 @@ static int igb_probe(struct pci_dev *pdev,
 	cards_found++;
 
 	pm_runtime_put_noidle(&pdev->dev);
+
+        if( ! (i2c_leds & 0x01) && adapter->i2c_dipsw) igb_led_setup(adapter);
+        if( ! (i2c_leds & 0x10) && adapter->i2c_pca9557_19) igb_led_setup2(adapter);
+
 	return 0;
 
 err_register:
 	igb_release_hw_control(adapter);
 #ifdef HAVE_I2C_SUPPORT
 	memset(&adapter->i2c_adap, 0, sizeof(adapter->i2c_adap));
+        memset(&adapter->i2c_adap2, 0, sizeof(adapter->i2c_adap2));
 #endif /* HAVE_I2C_SUPPORT */
 err_eeprom:
 	if (!e1000_check_reset_block(hw))
@@ -3344,8 +5439,11 @@ err_dma:
 static void igb_remove_i2c(struct igb_adapter *adapter)
 {
 
+        adapter->i2c_lmk05318b = 0;
+        adapter->i2c_dac1 = 0;
 	/* free the adapter bus structure */
 	i2c_del_adapter(&adapter->i2c_adap);
+        i2c_del_adapter(&adapter->i2c_adap2);
 }
 #endif /* HAVE_I2C_SUPPORT */
 
@@ -3366,20 +5464,31 @@ static void igb_remove(struct pci_dev *pdev)
 
 	pm_runtime_get_noresume(&pdev->dev);
 #ifdef HAVE_I2C_SUPPORT
+        adapter->i2c_lmk05318b = 0;
+        adapter->i2c_dac1 = 0;
+        cancel_work_sync(&adapter->dpll_task);
+        cancel_work_sync(&adapter->vcodac_task);
+        if(! (i2c_leds & 0x01)) igb_led_destroy(adapter);
+        if(! (i2c_leds & 0x10)) igb_led_destroy2(adapter);
 	igb_remove_i2c(adapter);
 #endif /* HAVE_I2C_SUPPORT */
 #ifdef HAVE_PTP_1588_CLOCK
 	igb_ptp_stop(adapter);
 #endif /* HAVE_PTP_1588_CLOCK */
 
+                mutex_destroy(&adapter->lmk_mutex);
+
 	/* flush_scheduled work may reschedule our watchdog task, so
 	 * explicitly disable watchdog tasks from being rescheduled
 	 */
 	set_bit(__IGB_DOWN, adapter->state);
-	timer_delete_sync(&adapter->watchdog_timer);
+	del_timer_sync(&adapter->watchdog_timer);
+//	timer_delete_sync(&adapter->watchdog_timer);
 	if (adapter->flags & IGB_FLAG_DETECT_BAD_DMA)
-		timer_delete_sync(&adapter->dma_err_timer);
-	timer_delete_sync(&adapter->phy_info_timer);
+		del_timer_sync(&adapter->dma_err_timer);
+//		timer_delete_sync(&adapter->dma_err_timer);
+	del_timer_sync(&adapter->phy_info_timer);
+//	timer_delete_sync(&adapter->phy_info_timer);
 
 	cancel_work_sync(&adapter->reset_task);
 	cancel_work_sync(&adapter->watchdog_task);
@@ -3600,6 +5709,8 @@ static int __igb_open(struct net_device *netdev, bool resuming)
 	/* start the watchdog. */
 	hw->mac.get_link_status = 1;
 	schedule_work(&adapter->watchdog_task);
+	if(adapter->i2c_lmk05318b) schedule_work(&adapter->dpll_task);
+        if(adapter->i2c_dac1) schedule_work(&adapter->vcodac_task);
 
 	return E1000_SUCCESS;
 
@@ -4901,6 +7012,7 @@ static void igb_spoof_check(struct igb_adapter *adapter)
  /* Need to wait a few seconds after link up to get diagnostic info */
 static void igb_update_phy_info(struct timer_list *t)
 {
+//	struct igb_adapter *adapter = from_timer(adapter, t, phy_info_timer);
 	struct igb_adapter *adapter =
 		container_of(t, struct igb_adapter, phy_info_timer);
 
@@ -4955,6 +7067,7 @@ bool igb_has_link(struct igb_adapter *adapter)
  **/
 static void igb_watchdog(struct timer_list *t)
 {
+//	struct igb_adapter *adapter = from_timer(adapter, t, watchdog_timer);
 	struct igb_adapter *adapter =
 		container_of(t, struct igb_adapter, watchdog_timer);
 	/* Do the rest outside of interrupt context */
@@ -5144,6 +7257,8 @@ static void igb_watchdog_task(struct work_struct *work)
 
 	igb_spoof_check(adapter);
 
+        adapter->doubleedge = doubleedge;
+
 	/* Reset the timer */
 	if (!test_bit(__IGB_DOWN, adapter->state)) {
 		if (adapter->flags & IGB_FLAG_NEED_LINK_UPDATE)
@@ -5154,6 +7269,481 @@ static void igb_watchdog_task(struct work_struct *work)
 				  round_jiffies(jiffies + 2 * HZ));
 	}
 }
+
+unsigned int mcp4725_set_value ( struct igb_adapter *adapter )
+{
+//        uint8_t mcp4725_address = 0x60; // MCP4725A0T (marking AJnn)
+        u8 outbuf[3];
+//        int ret;
+        u16 val;
+
+        if( ! adapter->i2c_dac1 ) return 1;
+
+        val = adapter->dac1val;
+        if (val >= (1 << 12) ) val = (1 << 12);
+        else if (val < 0) val = 0;
+
+        outbuf[0] = 0b00000000; //fast mode operation, no powerdown
+//      outbuf[0] = 0x40;       //normal speed operation, no powerdown
+//      outbuf[0] = 0x60;       //normal speed operation, write eeprom
+//      outbuf[1] = 0xFF; //data to voltage
+//      outbuf[2] = 0xF0; //data to voltage
+
+        outbuf[0] += (val >> 8) & 0xf;
+        outbuf[1] = val & 0xff;
+
+        if( i2c_smbus_write_byte_data(adapter->i2c_dac1, outbuf[0], outbuf[1]) )
+        {
+//              netdev_info(adapter->netdev, "mcp4725_set_value err\n");
+                return 1;
+        } else {
+//              netdev_info(adapter->netdev, "mcp4725_set_value ok, %i\n", val);
+                return 0;
+        }
+}
+
+unsigned int mcp4725_set_value2 ( struct igb_adapter *adapter )
+{
+        u8 outbuf[3];
+//        int ret;
+        u16 val;
+
+        if( ! adapter->i2c_dac2 ) return 1;
+
+        val = adapter->dac2val;
+        if (val >= (1 << 12) ) val = (1 << 12);
+        else if (val < 0) val = 0;
+
+        outbuf[0] = 0b00000000;
+
+        outbuf[0] += (val >> 8) & 0xf;
+        outbuf[1] = val & 0xff;
+
+        if( i2c_smbus_write_byte_data(adapter->i2c_dac2, outbuf[0], outbuf[1]) )
+        {
+                return 1;
+        } else {
+                return 0;
+        }
+}
+
+int lmk05318_hinomlo(struct igb_adapter *adapter)
+{
+        u8 lmkregs[512];
+        int i, res;
+        u64 val1, val2;
+
+        if( !adapter->i2c_lmk05318b ) return 0;
+
+        for (i = 110; i <= 114; i++) {
+                res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, i >> 8, i & 0x00ff );
+                if (res < 0) continue;
+                lmkregs[i] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+        }
+
+        for (i = 123; i <= 127; i++) {
+                res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, i >> 8, i & 0x00ff );
+                if (res < 0) continue;
+                lmkregs[i] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+        }
+
+        val1 = 0, val2 = 0;
+//      double ratio = 1.0;
+        val1 += lmkregs[110] << 32;
+        val1 += lmkregs[111] << 24;
+        val1 += lmkregs[112] << 16;
+        val1 += lmkregs[113] << 8;
+        val1 += lmkregs[114] << 0;
+
+        val2 += lmkregs[123] << 32;
+        val2 += lmkregs[124] << 24;
+        val2 += lmkregs[125] << 16;
+        val2 += lmkregs[126] << 8;
+        val2 += lmkregs[127] << 0;
+
+//      ratio = val1 / (val2 * 1.0);
+//      fprintf(stderr, "ratio: %llu / %llu = %02.20f, %s\n", val1, val2, val1 / (val2 * 1.0), val1 < val2 ? "-" : val1 == val2 ? "0" : "+");
+
+return val1 < val2 ? -1 : val1 == val2 ? 0 : 1;
+//return ratio;
+}
+
+static void vcodac_task(struct work_struct *work)
+{
+        struct igb_adapter *adapter = container_of(work,
+                                                   struct igb_adapter,
+                                                   vcodac_task);
+//        struct e1000_hw *hw = &adapter->hw;
+
+        int res;
+        u16 dacval_old;
+        int dac1val_histi = 0;
+        adapter->dac1val_hist = 0;
+
+        netdev_err(adapter->netdev, "VCO DAC worker start\n");
+
+        while(adapter->i2c_dac1) {
+                if(adapter->dac1val_hist < -1 * dacval_hist_interval) adapter->dac1val_hist = -1 * dacval_hist_interval;
+                if(adapter->dac1val_hist > dacval_hist_interval) adapter->dac1val_hist = dacval_hist_interval;
+                if(dac1val_histi++ > dacval_hist_interval ) {
+                        if (adapter->dac1val_hist > 0) dacval--; else if (adapter->dac1val_hist < 0) dacval++;
+                        if(dacval_old != dacval && adapter->dac1val_hist != 0) {
+                                adapter->dac1val = dacval_old = dacval;
+                                res = mcp4725_set_value(adapter );
+                                if(!res && debug > 0) dev_info(&adapter->pdev->dev, "VCO Tuning word update. mode:%s, (%i/%i) DAC:%i", vco_mode==1 ? "freq" : vco_mode==2 ? "phase" : "disabled", adapter->dac1val_hist, dacval_hist_interval, adapter->dac1val);
+                        }
+                        dac1val_histi = 0;
+                        adapter->dac1val_hist = 0;
+                }
+                msleep(960);
+        }
+
+        netdev_err(adapter->netdev, "VCO DAC worker stop\n");
+}
+
+static void igb_dpll_task(struct work_struct *work)
+{
+        struct igb_adapter *adapter = container_of(work,
+                                                   struct igb_adapter,
+                                                   dpll_task);
+      struct e1000_hw *hw = &adapter->hw;
+
+        u8 lmkregs_old[512];
+        u8 lmkregs[512];
+        u8 datetimestring[25];
+        u16 dacval_old;
+        u32 ledctl_old, ledctl2;
+        u16 lmkregi;
+        int res, ocxoready = 0, ocxoready_old, init = 0;
+        int dac1val_histi = 0;
+        long temp = 0;
+        int lmkocxotemp_l = 10;
+        int lmkocxotemp_ee = 0;
+        int dco_step_l = 0;
+        struct rtc_time tm;
+        u32 ptptm, sec_of_day;
+
+        adapter->dac1val_hist = 0;
+	ledctl_old = 255;
+
+        netdev_err(adapter->netdev, "DPLL worker start\n");
+
+        if(adapter->i2c_tmpocxo) {
+                if(adapter->i2c_eeprom) lmkocxotemp_ee = i2c_smbus_read_byte_data(adapter->i2c_eeprom, 6);
+                if(lmkocxotemp_ee != 00 && lmkocxotemp_ee != 0xff) lmkocxotemp = lmkocxotemp_ee;
+
+                if((res = tmp102_init(adapter->i2c_tmpocxo, lmkocxotemp - 5, lmkocxotemp)) == 0) {
+                        temp = tmp102_read(adapter->i2c_tmpocxo);
+                        ocxoready_old = ocxoready = tmp102_read_alert(adapter->i2c_tmpocxo) ? 1 : 0;
+                }
+        }
+
+                        lmkregi = 251;
+                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
+                        if (res < 0) goto nolmk;
+                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+                        if (lmkregs[lmkregi] < 0) goto nolmk;
+
+
+
+          while(adapter->i2c_lmk05318b) {
+         while(adapter->i2c_lmk05318b) {
+
+
+        if(adapter->i2c_lmk05318b) {
+                ledctl2 = adapter->ledctl2;
+                if(adapter->i2c_lmk05318b) {
+                        if(adapter->lmkreg == -1) goto nolmk; else lmkregi = adapter->lmkreg;
+
+                        if( adapter->lmkreg != lmkreg ) {
+                                if(lmkreg == 0 || lmkreg == 1) {
+                                        init = 0;
+                                        if(lmkreg == 1) {
+                                                dev_info(&adapter->pdev->dev, "DPLL softreset\n");
+                                                res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x00, (0x0C) | (0x9B << 8));
+                                                usleep_range(10000, 20000);
+                                                res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x00, (0x0C) | (0x1B << 8));
+                                        }
+                                        if (adapter->dac1val_hist > 0) dacval--; else if (adapter->dac1val_hist < 0) dacval++;
+                                        dev_info(&adapter->pdev->dev, "VC-OCXO servo %s: %s DAC:%i %i %i, hist:%i\n", !(lmkregs[14] & 0x40) ? "enabled" : "disabled (LOFL)", res == 0 ? "===" : res > 0 ? "hi" : "lo", dacval_old, dacval, 
+                                                adapter->dac1val, adapter->dac1val_hist);
+                                        if(dacval_old != dacval) { adapter->dac1val_hist = 0; adapter->dac1val = dacval_old = dacval; mcp4725_set_value(adapter ); }
+
+                ptptm = E1000_READ_REG(hw, E1000_SYSTIMH);
+                sec_of_day = ptptm % (24 * 60 * 60);
+                tm.tm_hour = sec_of_day / (60 * 60);
+                tm.tm_min = sec_of_day % (60 * 60) / 60;
+                tm.tm_sec = ptptm % 60;
+//                                      res = rtc_write_time(&adapter->i2c_rtc->dev, &tm);
+//                                      dev_info(&adapter->pdev->dev, "%s: RTC %s UTC time %02d:%02d:%02d, "
+//                                      "%02d-%02d-%02d, wday=%d, time=%lld.%d, res=%i",
+//                                      "rtc_write_time", "m41t81",
+//                                      tm.tm_hour, tm.tm_min, tm.tm_sec,
+//                                      tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_wday, rtc_tv_sec, tm.tm_nsec, res);
+//                                      dev_info(&adapter->pdev->dev, "rtc_write_time res:%i\n", res);
+
+                                        lmkreg = adapter->lmkreg;
+                                } else {
+                                        adapter->lmkreg = lmkreg;
+                                        if(adapter->i2c_pca9557_19)
+                                                dev_info(&adapter->pdev->dev, "monitor LMK05318B register R%d on leds D12-D19.\n", lmkreg);
+                                        if(init) dev_info(&adapter->pdev->dev, "LMK05318B register R%d @ 0x%03x = 0x%02x\n", lmkreg, lmkreg, lmkregs[lmkreg]);
+                                }
+                        }
+
+                        if( adapter->i2c_tmpocxo && (lmkocxotemp_l != lmkocxotemp) ) {
+                                if(lmkocxotemp == 0) lmkocxotemp = lmkocxotemp_l;
+                                if((res = tmp102_init(adapter->i2c_tmpocxo, lmkocxotemp - 5, lmkocxotemp)) == 0) {
+                                        temp = tmp102_read(adapter->i2c_tmpocxo);
+                                        ocxoready = tmp102_read_alert(adapter->i2c_tmpocxo) ? 1 : 0;
+                                }
+                                dev_warn(&adapter->pdev->dev, "OCXO %s (temperature = %li C, thresshold = %i)\n", ocxoready ? "ready" : "heating up", temp / 2000, lmkocxotemp);
+                                lmkocxotemp_l = lmkocxotemp;
+                        }
+mutex_lock(&adapter->lmk_mutex);
+//adapter->lmkrefcount++;
+                        lmkregi = adapter->lmkreg;
+                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
+                        if (res < 0) goto nolmk;
+                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+                        if (lmkregs[lmkregi] < 0) goto nolmk;
+
+                           ledctl2 = lmkregs[lmkregi];
+                           adapter->ledctl2 = ledctl2;
+
+                        lmkregi = 128;
+                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
+                        if (res < 0) goto nolmk;
+                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+                        if (lmkregs[lmkregi] < 0) goto nolmk;
+
+                        lmkregi = 167;
+                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
+                        if (res < 0) goto nolmk;
+                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+                        if (lmkregs[lmkregi] < 0) goto nolmk;
+
+                        lmkregi = 411;
+                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
+                        if (res < 0) goto nolmk;
+                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+                        if (lmkregs[lmkregi] < 0) goto nolmk;
+
+                        lmkregi = 13;
+                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
+                        if (res < 0) goto nolmk;
+                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+                        if (lmkregs[lmkregi] < 0) goto nolmk;
+
+                        lmkregi = 14;
+                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
+                        if (res < 0) goto nolmk;
+                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+                        if (lmkregs[lmkregi] < 0) goto nolmk;
+mutex_unlock(&adapter->lmk_mutex);
+//adapter->lmkrefcount--;
+
+                if(adapter->i2c_tmpocxo) {
+                        temp = tmp102_read(adapter->i2c_tmpocxo);
+                        ocxoready = tmp102_read_alert(adapter->i2c_tmpocxo) ? 1 : 0;
+                        if(!init || ocxoready != ocxoready_old) {
+                                dev_warn(&adapter->pdev->dev, "OCXO %s (temperature = %li C)\n", ocxoready ? "ready" : "heating up", temp / 2000);
+                                if(init && ocxoready) {
+                                        dev_warn(&adapter->pdev->dev, "APLLx VCO Calibration Active"); /*start lmk calibration*/
+                                        res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x00, (0x0C) | (0x9B << 8));
+                                        usleep_range(10000, 20000);
+                                        res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x00, (0x0C) | (0x1B << 8));
+                                }
+                                ocxoready_old = ocxoready;
+                        }
+                }
+
+                }
+                if(adapter->i2c_pca9557_19)
+                        i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, ~ledctl2);
+
+                if(!init || lmkregs[13] != lmkregs_old[13]) {
+                        if(!init || (lmkregs[13] & 0x01) != (lmkregs_old[13] & 0x01) ) dev_warn(&adapter->pdev->dev, "R13: %s",
+                                (lmkregs[13] & 0x01) ? "Loss of source XO" : "source XO detected");
+                        if(!init || (lmkregs[13] & 0x04) != (lmkregs_old[13] & 0x04) ) dev_warn(&adapter->pdev->dev, "R13: %s",
+                                (lmkregs[13] & 0x04) ? "Loss of Lock APLL1" : "APLL1 Locked");
+                        if(!init || (lmkregs[13] & 0x08) != (lmkregs_old[13] & 0x08) ) dev_warn(&adapter->pdev->dev, "R13: %s",
+                                (lmkregs[13] & 0x08) ? "Loss of Lock APLL2" : "APLL2 Locked");
+                        if(!init || (lmkregs[13] & 0x10) != (lmkregs_old[13] & 0x10) ) dev_warn(&adapter->pdev->dev, "R13: %s",
+                                (lmkregs[13] & 0x10) ? "Loss of source freq detection XO" : "source freq XO detected");
+                        lmkregs_old[13] = lmkregs[13];
+                }
+
+                if(!init || lmkregs[128] != lmkregs_old[128] ) {
+                        u8 dpll_pllnumsat_hi, dpll_pllnumsat_lo;
+                        dpll_pllnumsat_lo = (lmkregs[128] & 0x01) ? 0x01 : 0x00;
+                        dpll_pllnumsat_hi = (lmkregs[128] & 0x02) ? 0x01 : 0x00;
+                        if(!init || (lmkregs[128] & 0x01) != (lmkregs_old[128] & 0x01) ) dev_err(&adapter->pdev->dev, "PLL1 Numerator saturation low status");
+                        if(!init || (lmkregs[128] & 0x02) != (lmkregs_old[128] & 0x02) ) dev_err(&adapter->pdev->dev, "PLL1 Numerator saturation high status");
+                        lmkregs_old[128] = lmkregs[128];
+                }
+
+                if(!init || lmkregs[411] != lmkregs_old[411] ) {
+                        u8 dpll_refpriv, dpll_refsecv;
+                        dpll_refpriv = (lmkregs[411] & 0x04) ? 0x01 : 0x00;
+                        dpll_refsecv = (lmkregs[411] & 0x08) ? 0x01 : 0x00;
+                        if(!init || (lmkregs[411] & 0x04) != (lmkregs_old[411] & 0x04) ) dev_warn(&adapter->pdev->dev, "DPLL PRIREF %svalid", dpll_refpriv ? "" : "in");
+                        if(!init || (lmkregs[411] & 0x08) != (lmkregs_old[411] & 0x08) ) dev_warn(&adapter->pdev->dev, "DPLL SECREF %svalid", dpll_refsecv ? "" : "in");
+                        lmkregs_old[411] = lmkregs[411];
+                }
+
+                if(!init || lmkregs[167] != lmkregs_old[167] ) {
+                        u8 dpll__refsel_stat;
+                        dpll__refsel_stat = (lmkregs[167] & 0x03);
+                        if(!init || (lmkregs[167] & 0x03) != (lmkregs_old[167] & 0x03) ) {
+                                if (dpll__refsel_stat == 0x00) dev_warn(&adapter->pdev->dev, "DPLL holdover selected");
+                                if (dpll__refsel_stat == 0x01) dev_info(&adapter->pdev->dev, "DPLL PRIREF selected");
+                                if (dpll__refsel_stat == 0x02) dev_info(&adapter->pdev->dev, "DPLL SECREF selected");
+                        }
+                        lmkregs_old[167] = lmkregs[167];
+                }
+
+                if(!init || lmkregs[14] != lmkregs_old[14]) {
+                        u8 dpll_pl, dpll_fl, dpll_hold, dpll_hist, dpll_refswitch;
+                        dpll_pl = (lmkregs[14] & 0x80) ? 0x00 : 0x02; // led D2
+                        dpll_fl = (lmkregs[14] & 0x40) ? 0x00 : 0x01;
+                        dpll_hist = (lmkregs[14] & 0x20) ? 0x01 : 0x00;
+                        dpll_hold = (lmkregs[14] & 0x10) ? 0x01 : 0x00;
+                        dpll_refswitch = (lmkregs[14] & 0x08) ? 0x01 : 0x00;
+
+// dpll_hist RTC Software clock calibration
+                if(!init || (lmkregs[14] & 0x20) != (lmkregs_old[14] & 0x20) ) {
+                        struct rtc_time tm;
+                        u8 rtcname[12];
+
+                        if ( adapter->part_boardfeatures & 0x04 && adapter->i2c_rtc) {
+                                res = rtc_read_time(&adapter->i2c_rtc->dev, &tm, rtcname);
+                                if(!res) {
+                                        sprintf(datetimestring, "RTC %02d-%02d-%02d %02d:%02d:%02d UTC",
+                                        tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+                                } else sprintf(datetimestring, "rtc err");
+                        }
+                        if(!init) dev_warn(&adapter->pdev->dev, "DPLL %s", datetimestring);
+                }
+
+
+                        if(!init || (lmkregs[14] & 0x40) != (lmkregs_old[14] & 0x40) ) dev_warn(&adapter->pdev->dev, "DPLL %s", dpll_fl ? "frequency locked" : "loss of frequency lock");
+                        if(!init || (lmkregs[14] & 0x80) != (lmkregs_old[14] & 0x80) ) dev_warn(&adapter->pdev->dev, "DPLL %s", dpll_pl ? "phase locked" : "loss of phase lock");
+                        if(         (lmkregs[14] & 0x20) != (lmkregs_old[14] & 0x20) && dpll_hist) dev_warn(&adapter->pdev->dev, "DPLL Tuning word history update (%s)", datetimestring);
+                        if(         (lmkregs[14] & 0x20) != (lmkregs_old[14] & 0x20) && dpll_hist && adapter->i2c_dac1) dev_warn(&adapter->pdev->dev, "VCO Tuning word update (%i/%i) DAC:%i", adapter->dac1val_hist, dacval_hist_interval, adapter->dac1val );
+                        if(         (lmkregs[14] & 0x10) != (lmkregs_old[14] & 0x10) ) dev_warn(&adapter->pdev->dev, "DPLL Holdover event %s", dpll_hold ? "start" : "end");
+                        if(         (lmkregs[14] & 0x08) != (lmkregs_old[14] & 0x08) ) dev_warn(&adapter->pdev->dev, "DPLL Reference switchover  %s", dpll_refswitch ? "1" : "0");
+
+                        if(dpll_pl) adapter->ledctl |= 0x02; else adapter->ledctl &= ~0x02;
+                        lmkregs_old[14] = lmkregs[14];
+                }
+
+                if(!init || lmkregs[251] != lmkregs_old[251] ) {
+                        if(!init || (lmkregs[251] & 0x03) != (lmkregs_old[251] & 0x03) ) dev_warn(&adapter->pdev->dev, "DPLL switchover mode: %s",
+                                (lmkregs[251] & 0x03) == 0x00 ? "Auto non-revertive" :
+                                (lmkregs[251] & 0x03) == 0x01 ? "Auto revertive" :
+                                (lmkregs[251] & 0x03) == 0x02 ? "Manual fallback" :
+                                        (lmkregs[251] & 0x03) == 0x03 ? "Manual holdover" : "");
+                        if(!init || (lmkregs[251] & 0x20) != (lmkregs_old[251] & 0x20) ) dev_warn(&adapter->pdev->dev, "DPLL Source of manual selection: %s",
+                                (lmkregs[251] & 0x20) ? "Hardware pin REFSEL" : "Software register DPLL_REF_MAN_REG_SEL");
+                        if(         ((lmkregs[251] & 0x20) == 0x00) && (!init ||(lmkregs[251] & 0x10) != (lmkregs_old[251] & 0x10)) ) dev_warn(&adapter->pdev->dev, "DPLL Software manual Ref selection: %s",
+                                (lmkregs[251] & 0x10) ? "Secondary" : "Primary");
+                        lmkregs_old[251] = lmkregs[251];
+                }
+
+                if( (!(lmkregs[14] & 0x40) && dacval_hist_interval && vco_mode == 1) || (!(lmkregs[14] & 0x80) && dacval_hist_interval && vco_mode == 2) ) {
+                        res = lmk05318_hinomlo(adapter);
+                        if(res < 0) adapter->dac1val_hist--; else if(res > 0) adapter->dac1val_hist++;
+
+		}
+
+        }
+        init = 1;
+
+        if(adapter->i2c_dipsw) {
+                u32 ledctl = 0;
+                ledctl = adapter->ledctl;
+
+//   adapter->map_led0 = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 0) & BIT(8); //lmkregh (1b)
+//   adapter->map_led0 += i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 1); //lmkregl (8b) 0x000-0x19b = R0-R411
+//   adapter->map_led0_mask = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LEDMAP_BASE + 2); // 5 unused + sys/fw + 1 invert + 1 and/or + 8 mask bits
+//lmkregs[ adapter->map_led0 & BIT(8) | adapter->map_led0 ]
+//led2 on = (lmkregs[ adapter->map_led0 & BIT(8) | adapter->map_led0 ] & (adapter->map_led0_mask & 0x00ff)) ^ (adapter->map_led0_mask & BIT(9)) );
+/*
+        ledctl |= (adapter->map_led0_mask & BIT(8) ? (lmkregs[adapter->map_led0 & 0x1ff] == (adapter->map_led0_mask & 0xff) ) << 0 : (lmkregs[adapter->map_led0 & 0x1ff] ? 1:0) ) << 0;
+        ledctl |= (adapter->map_led1_mask & BIT(8) ? (lmkregs[adapter->map_led1 & 0x1ff] == (adapter->map_led1_mask & 0xff) ) << 1 : (lmkregs[adapter->map_led1 & 0x1ff] ? 1:0) ) << 1;
+        ledctl |= (adapter->map_led2_mask & BIT(8) ? (lmkregs[adapter->map_led2 & 0x1ff] == (adapter->map_led2_mask & 0xff) ) << 2 : (lmkregs[adapter->map_led2 & 0x1ff] ? 1:0) ) << 2;
+        ledctl |= (adapter->map_led3_mask & BIT(8) ? (lmkregs[adapter->map_led3 & 0x1ff] == (adapter->map_led3_mask & 0xff) ) << 3 : (lmkregs[adapter->map_led3 & 0x1ff] ? 1:0) ) << 3;
+        adapter->ledctl = ledctl | (adapter->ledctl & 0xf0);
+*/
+if( ledctl_old != adapter->ledctl ) {
+        ledctl_old = adapter->ledctl;
+
+/*
+        dev_warn(&adapter->pdev->dev, "led mapping test led0 = %i, func = %s, invert = %i, lmkreg = R%i (0x%03x), mask 0x%02x",
+                adapter->ledctl & 0x01 ? 1:0
+                adapter->map_led0_mask & BIT(8) ? "AND":"OR",
+                adapter->map_led0_mask & BIT(9) ? 1 : 0,
+                adapter->map_led0 & 0x1ff,
+                adapter->map_led0 & 0x1ff,
+                adapter->map_led0_mask & 0xff );
+*/
+}
+
+                if(adapter->i2c_dipsw->addr == 0x20)
+                        i2c_smbus_write_byte(adapter->i2c_dipsw, ~ledctl);
+                if(adapter->i2c_dipsw->addr == 0x18)
+                        i2c_smbus_write_byte_data(adapter->i2c_dipsw, 1, ~ledctl & 0x0f);
+
+                ledctl &= ~(0x0c);
+                if(adapter->i2c_dipsw->addr == 0x20)
+                        i2c_smbus_write_byte(adapter->i2c_dipsw, ~ledctl);
+                if(adapter->i2c_dipsw->addr == 0x18)
+                        i2c_smbus_write_byte_data(adapter->i2c_dipsw, 1, ~ledctl & 0x0f);
+        }
+
+                                                                                                        
+        if(adapter->i2c_lmk05318b) {
+// 0xff ff ff max 0x1fffff
+                if( dco_step_l != dco_step ) {
+                        adapter->dco_step = dco_step_l = dco_step;
+
+//                      i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5b | ((( adapter->dco_step >> 32) & 0x1f) << 8)); //DPLL_FDEV_37:32 & 0x1f
+//                      i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5c | ((( adapter->dco_step >> 24) & 0xff) << 8)); //DPLL_FDEV_31:24
+//                      i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5d | ((( adapter->dco_step >> 16) & 0xff) << 8)); //DPLL_FDEV_23:16
+//                      i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5e | ((( adapter->dco_step >>  8) & 0xff) << 8)); //DPLL_FDEV_15:8
+//                      i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5f | ((( adapter->dco_step >>  0) & 0xff) << 8)); //DPLL_FDEV
+
+                        i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5b | ((( adapter->dco_step >> 16) & 0x1f) << 8)); //DPLL_FDEV_37:32 & 0x1f
+                        i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5c | ((( adapter->dco_step >> 8) & 0xff) << 8)); //DPLL_FDEV_31:24
+                        i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5d | ((( adapter->dco_step >> 0) & 0xff) << 8)); //DPLL_FDEV_23:16
+
+                        if( adapter->dco_step ) i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5f | ( 0x01 << 8)); //DPLL_FDEV_EN = 1
+                        else i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x5f | ( 0x00 << 8)); //DPLL_FDEV_EN = 0
+
+                        netdev_err(adapter->netdev, "DPLL DCO %sabled, step=%i\n", adapter->dco_step ? "en" : "dis", adapter->dco_step);
+                }
+
+
+//              i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x60 | (0x00 << 8)); //DPLL_FDEV_REG_UPDATE increment
+//              i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x60 | (0x01 << 8)); //DPLL_FDEV_REG_UPDATE decrement
+        }
+                                                                                                        
+
+                msleep(960);
+         }
+//      i2c_leds |= 0xff;
+nolmk:
+                adapter->i2c_lmk05318b = 0;
+        }
+
+        netdev_err(adapter->netdev, "DPLL worker stop\n");
+}
+                        
+
+
+
+
 
 static void igb_dma_err_task(struct work_struct *work)
 {
@@ -5214,6 +7804,7 @@ dma_timer_reset:
  **/
 static void igb_dma_err_timer(struct timer_list *t)
 {
+//	struct igb_adapter *adapter = from_timer(adapter, t, dma_err_timer);
 	struct igb_adapter *adapter =
 		container_of(t, struct igb_adapter, dma_err_timer);
 	/* Do the rest outside of interrupt context */
@@ -6032,6 +8623,10 @@ cleanup_tx_tstamp:
 		adapter->ptp_tx_skb = NULL;
 		if (adapter->hw.mac.type == e1000_82576)
 			cancel_work_sync(&adapter->ptp_tx_work);
+// 2 september 2024
+                        if (adapter->hw.mac.type == e1000_i210 || adapter->hw.mac.type == e1000_i211)
+                                cancel_work_sync(&adapter->ptp_tx_work);
+
 		clear_bit_unlock(__IGB_PTP_TX_IN_PROGRESS, adapter->state);
 	}
 #endif
@@ -7721,7 +10316,9 @@ static bool igb_add_rx_frag(struct igb_ring *rx_ring,
 	/* we need the header to contain the greater of either ETH_HLEN or
 	 * 60 bytes if the skb->len is less than 60 for skb_pad.
 	 */
-	pull_len = eth_get_headlen(skb->dev, va, IGB_RX_HDR_LEN);
+//octo
+//	pull_len = eth_get_headlen(skb->dev, va, IGB_RX_HDR_LEN);
+	pull_len = eth_get_headlen(va, IGB_RX_HDR_LEN);
 
 	/* align pull length to size of long to optimize memcpy performance */
 	memcpy(__skb_put(skb, pull_len), va, ALIGN(pull_len, sizeof(long)));

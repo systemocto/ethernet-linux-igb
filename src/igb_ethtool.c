@@ -16,6 +16,7 @@
 
 #include "igb_regtest.h"
 #include <linux/if_vlan.h>
+#undef ETHTOOL_GEEE
 #ifdef ETHTOOL_GEEE
 #include <linux/mdio.h>
 #endif
@@ -2975,6 +2976,9 @@ static int igb_get_eee(struct net_device *netdev, struct ethtool_eee *edata)
 #endif /* !HAVE_ETHTOOL_KEEE */
 #endif
 
+//octo
+#undef ETHTOOL_SEEE
+
 #ifdef ETHTOOL_SEEE
 static int igb_set_keee(struct net_device *netdev,
 			struct ethtool_keee *kedata)
@@ -3925,6 +3929,7 @@ static const struct ethtool_ops igb_ethtool_ops = {
 	.set_advcoal		= igb_set_dmac_coal,
 #endif /* ETHTOOL_GADV_COAL */
 #ifndef HAVE_RHEL6_ETHTOOL_OPS_EXT_STRUCT
+
 #ifdef ETHTOOL_GEEE
 #ifdef HAVE_ETHTOOL_KEEE
 	.get_eee		= igb_get_keee,

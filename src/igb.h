@@ -2,6 +2,7 @@
 /* Copyright(c) 2007 - 2026 Intel Corporation. */
 
 /* Linux PRO/1000 Ethernet Driver main header file */
+
 #ifndef _IGB_H_
 #define _IGB_H_
 
@@ -21,6 +22,9 @@
 #include <linux/ethtool.h>
 #endif
 
+#ifndef HAVE_I2C_SUPPORT
+#define HAVE_I2C_SUPPORT
+#endif
 struct igb_adapter;
 
 #if defined(CONFIG_DCA) || defined(CONFIG_DCA_MODULE)
@@ -60,7 +64,10 @@ struct igb_adapter;
 #ifdef HAVE_I2C_SUPPORT
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
+#include <linux/leds.h>
 #endif /* HAVE_I2C_SUPPORT */
+
+struct igb_adapter;
 
 /* Interrupt defines */
 #define IGB_START_ITR                    648 /* ~6000 ints/sec */
@@ -686,6 +693,10 @@ struct igb_adapter {
 	struct timecounter tc;
 	u32 tx_hwtstamp_timeouts;
 	u32 rx_hwtstamp_cleared;
+
+        u64 ptp_pps_start;
+        u32 pps_delay;
+        bool doubleedge;
 #endif /* HAVE_PTP_1588_CLOCK */
 
 #ifdef HAVE_I2C_SUPPORT
@@ -693,6 +704,75 @@ struct igb_adapter {
 	struct i2c_adapter i2c_adap;
 	struct i2c_client *i2c_client;
 #endif /* HAVE_I2C_SUPPORT */
+
+        struct i2c_algo_bit_data i2c_algo2;
+        struct i2c_adapter i2c_adap2;
+        struct i2c_client *i2c_client2;
+        struct i2c_client *i2c_dipsw;
+        struct i2c_client *i2c_gpi2;
+        struct i2c_client *i2c_eeprom;
+        struct i2c_client *i2c_rtc;
+        struct i2c_client *i2c_dac1;
+        struct i2c_client *i2c_dac2;
+        struct i2c_client *i2c_gps;
+        struct i2c_client *i2c_tmp;
+        struct i2c_client *i2c_tmpocxo;
+
+
+        int dipsw;
+        int sn;
+        int rtc_utc_tai;
+	u16 dac1val;
+	u16 dac2val;
+	int dac1val_hist;
+
+        s32 xtalcal;
+
+        struct mutex led_mutex;
+        struct led_classdev led0;
+        struct led_classdev led1;
+        struct led_classdev led2;
+        struct led_classdev led3;
+        u8 ledctl;
+        s32 part_boardfeatures;
+
+        struct i2c_client *i2c_pca9557_19;
+        struct mutex led_mutex2;
+        struct led_classdev led10;
+        struct led_classdev led11;
+        struct led_classdev led12;
+        struct led_classdev led13;
+        struct led_classdev led14;
+        struct led_classdev led15;
+        struct led_classdev led16;
+        struct led_classdev led17;
+        u8 ledctl2;
+
+        struct work_struct dpll_task;
+        struct work_struct vcodac_task;
+        struct i2c_client *i2c_lmk05318b;
+        struct i2c_client *i2c_cdce813;
+        u16 lmkreg;
+        u8 lmkrefcount; //
+        struct mutex lmk_mutex;
+        int dco_step; // 0:DPLL_FDEV_EN=0, >0:DPLL_FDEV=dco_step
+        int dco_inc;
+        int dco_dec;
+
+        int map_led0; // lmkregh 1b, lmkregl 0x000-0x19b = R0-R411
+        int map_led0_mask; // 5 unused + sys/fw + 1 invert + 1 and/or + 8 mask bits
+        int map_led1;
+        int map_led1_mask;
+        int map_led2;
+        int map_led2_mask;
+        int map_led3;
+        int map_led3_mask;
+
+//   eeprom map_led0{lmkregh 1b, lmkregl, regmask}
+//   eeprom map_led1{lmkregh 1b, lmkregl, regmask}
+//   eeprom map_led2{lmkregh 1b, lmkregl, regmask}
+//   eeprom map_led3{lmkregh 1b, lmkregl, regmask}
+//   eeprom map_lmkregD12_D19 ledD12-D19 lmkreg mapping {lmkregh, lmkregl, regmask}
 	unsigned long link_check_timeout;
 
 	int devrc;
@@ -711,6 +791,8 @@ struct igb_adapter {
 	u8 rss_indir_tbl[IGB_RETA_SIZE];
 #endif
 };
+
+#define led_to_igb(ldev, led) container_of(ldev, struct igb_adapter, led)
 
 #ifdef CONFIG_IGB_VMDQ_NETDEV
 struct igb_vmdq_adapter {
@@ -822,6 +904,9 @@ enum host_cmd_id_status {
 
 extern char igb_driver_name[];
 extern char igb_driver_version[];
+
+void igb_led_set(struct igb_adapter *adapter, int led, u16 brightness);
+enum led_brightness igb_led_get(struct igb_adapter *adapter, int led);
 
 int igb_open(struct net_device *netdev);
 int igb_close(struct net_device *netdev);

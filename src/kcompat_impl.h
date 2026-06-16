@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2007 - 2026 Intel Corporation. */
+/* Copyright(c) 2007 - 2025 Intel Corporation. */
 
 #ifndef _KCOMPAT_IMPL_H_
 #define _KCOMPAT_IMPL_H_
@@ -120,73 +120,6 @@ static inline bool __netdev_tx_sent_queue(struct netdev_queue *dev_queue,
 	return true;
 }
 #endif /* NEED_NETDEV_TX_SENT_QUEUE */
-
-/*HAVE_NETIF_SUBQUEUE_MAYBE_STOP
- *
- * netif_subqueue_maybe_stop was added in kernel 6.3 upstream commit
- * c91c46de6bbc ("net: provide macros for commonly copied lockless queue
- * stop/wake code")
- */
-#ifndef HAVE_NETIF_SUBQUEUE_MAYBE_STOP
-#define netif_txq_try_stop(txq, get_desc, start_thrs)			\
-	({								\
-		int _res;						\
-									\
-		netif_tx_stop_queue(txq);				\
-		/* Producer index and stop bit must be visible		\
-		 * to consumer before we recheck.			\
-		 * Pairs with a barrier in __netif_txq_completed_wake(). \
-		 */							\
-		smp_mb__after_atomic();					\
-									\
-		/* We need to check again in a case another		\
-		 * CPU has just made room available.			\
-		 */							\
-		_res = 0;						\
-		if (unlikely(get_desc >= start_thrs)) {			\
-			netif_tx_start_queue(txq);			\
-			_res = -1;					\
-		}							\
-		_res;							\
-	})
-
-/**
- * netif_txq_maybe_stop() - locklessly stop a Tx queue, if needed
- * @txq:	struct netdev_queue to stop/start
- * @get_desc:	get current number of free descriptors (see requirements below!)
- * @stop_thrs:	minimal number of available descriptors for queue to be left
- *		enabled
- * @start_thrs:	minimal number of descriptors to re-enable the queue, can be
- *		equal to @stop_thrs or higher to avoid frequent waking
- *
- * All arguments may be evaluated multiple times, beware of side effects.
- * @get_desc must be a formula or a function call, it must always
- * return up-to-date information when evaluated!
- * Expected to be used from ndo_start_xmit, see the comment on top of the file.
- *
- * Returns:
- *	 0 if the queue was stopped
- *	 1 if the queue was left enabled
- *	-1 if the queue was re-enabled (raced with waking)
- */
-#define netif_txq_maybe_stop(txq, get_desc, stop_thrs, start_thrs)	\
-	({								\
-		int _res;						\
-									\
-		_res = 1;						\
-		if (unlikely(get_desc < stop_thrs))			\
-			_res = netif_txq_try_stop(txq, get_desc, start_thrs); \
-		_res;							\
-	})
-
-#define netif_subqueue_maybe_stop(dev, idx, get_desc, stop_thrs, start_thrs) \
-	({								\
-		struct netdev_queue *txq;				\
-									\
-		txq = netdev_get_tx_queue(dev, idx);			\
-		netif_txq_maybe_stop(txq, get_desc, stop_thrs, start_thrs); \
-	})
-#endif /* !HAVE_NETIF_SUBQUEUE_MAYBE_STOP */
 
 /* NEED_NET_PREFETCH
  *
@@ -869,16 +802,17 @@ struct kc_devlink_health_reporter {
 static inline struct devlink_health_reporter *
 devl_health_reporter_create(struct devlink *devlink,
 			    const struct devlink_health_reporter_ops *ops,
-			    void *priv)
+			    u64 graceful_period, void *priv)
 {
 	struct devlink_health_reporter *reporter;
 
 	devl_unlock(devlink);
 #ifdef NEED_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER
-	reporter = devlink_health_reporter_create(devlink, ops, 0,
+	reporter = devlink_health_reporter_create(devlink, ops, graceful_period,
 						  !!ops->recover, priv);
 #else
-	reporter = devlink_health_reporter_create(devlink, ops, 0, priv);
+	reporter = devlink_health_reporter_create(devlink, ops, graceful_period,
+						  priv);
 #endif /* NEED_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER */
 	devl_lock(devlink);
 
@@ -893,23 +827,6 @@ devl_health_reporter_destroy(struct devlink_health_reporter *reporter)
 	devl_lock(((struct kc_devlink_health_reporter *)(reporter))->devlink);
 }
 #endif /* NEED_DEVL_HEALTH_REPORTER_CREATE */
-
-#ifdef NEED_DEVL_HEALTH_REPORTER_CREATE_REMOVE_GRACEFUL_PERIOD
-/* NEED_DEVL_HEALTH_REPORTER_CREATE_REMOVE_GRACEFUL_PERIOD
- *
- * Since upstream commit d2b007374551 ("devlink: Move graceful period
- * parameter to reporter ops"), the graceful period is defined in the ops
- * structure instead of as a parameter to the health reporter. Currently, all
- * Intel drivers use a fixed value of zero for the graceful period. Provide
- * a wrapper implementation that always passes 0 to the graceful period. If
- * a driver should ever need to support a non-zero graceful period, an
- * appropriate HAVE_ flag must be implemented and the driver must be careful
- * to check and pass the non-zero graceful period on older kernels.
- */
-#define devl_health_reporter_create(devlink, ops, priv) \
-	devl_health_reporter_create((devlink), (ops), 0, (priv))
-
-#endif /* NEED_DEVL_HEALTH_REPORTER_CREATE_REMOVE_GRACEFUL_PERIOD */
 
 #ifdef NEED_DEVLINK_FMSG_DUMP_SKB
 /**
@@ -1467,7 +1384,6 @@ cpu_latency_qos_remove_request(struct pm_qos_request *req)
 #define static_branch_likely(x)		likely(static_key_enabled(x))
 #define static_branch_unlikely(x)	unlikely(static_key_enabled(x))
 
-#define static_branch_enable(x)		static_key_enable(x)
 #define static_branch_inc(x)		static_key_slow_inc(x)
 #define static_branch_dec(x)		static_key_slow_dec(x)
 
@@ -1799,11 +1715,10 @@ int _kc_pci_iov_vf_id(struct pci_dev *dev);
  * 3dc167ba5729 ("sched/cputime: Improve cputime_adjust()")
  */
 #ifdef NEED_MUL_U64_U64_DIV_U64
-#undef mul_u64_u64_div_u64
 u64 mul_u64_u64_div_u64(u64 a, u64 mul, u64 div);
 #endif /* NEED_MUL_U64_U64_DIV_U64 */
 
-/* NEED_ROUNDUP_U64 and NEED_DIV_U64_ROUND_UP and NEED_DIV_U64_ROUND_CLOSEST
+/* NEED_ROUNDUP_U64 and NEED_DIV_U64_ROUND_UP
  *
  * roundup_u64 and DIV_U64_FOUND_UP were introduced by commit 1d4ce389da2b
  * ("ice: add and use roundup_u64 instead of open coding equivalent"). They
@@ -1821,12 +1736,12 @@ static inline u64 roundup_u64(u64 x, u32 y)
 }
 #endif /* NEED_ROUNDUP_U64 */
 
-#ifdef NEED_DIV_U64_ROUND_CLOSEST
-#define DIV_U64_ROUND_CLOSEST(dividend, divisor)	\
-	({ u32 _tmp = (divisor); div_u64((u64)(dividend) + _tmp / 2, _tmp); })
-#endif /* NEED_DIV_U64_ROUND_CLOSEST */
+#ifndef HAVE_LINKMODE
+static inline void linkmode_set_bit(int nr, volatile unsigned long *addr)
+{
+	__set_bit(nr, addr);
+}
 
-#ifdef NEED_LINKMODE_ZERO
 static inline void linkmode_zero(unsigned long *dst)
 {
 	bitmap_zero(dst, __ETHTOOL_LINK_MODE_MASK_NBITS);
@@ -1837,68 +1752,11 @@ static inline void linkmode_copy(unsigned long *dst, const unsigned long *src)
 	bitmap_copy(dst, src, __ETHTOOL_LINK_MODE_MASK_NBITS);
 }
 
-static inline void linkmode_and(unsigned long *dst, const unsigned long *a,
-				const unsigned long *b)
-{
-	bitmap_and(dst, a, b, __ETHTOOL_LINK_MODE_MASK_NBITS);
-}
-
-static inline void linkmode_or(unsigned long *dst, const unsigned long *a,
-				const unsigned long *b)
-{
-	bitmap_or(dst, a, b, __ETHTOOL_LINK_MODE_MASK_NBITS);
-}
-
 static inline bool linkmode_empty(const unsigned long *src)
 {
 	return bitmap_empty(src, __ETHTOOL_LINK_MODE_MASK_NBITS);
 }
-
-static inline int linkmode_andnot(unsigned long *dst, const unsigned long *src1,
-				  const unsigned long *src2)
-{
-	return bitmap_andnot(dst, src1, src2,  __ETHTOOL_LINK_MODE_MASK_NBITS);
-}
-
-static inline void linkmode_set_bit(int nr, volatile unsigned long *addr)
-{
-	__set_bit(nr, addr);
-}
-
-static inline void linkmode_clear_bit(int nr, volatile unsigned long *addr)
-{
-	__clear_bit(nr, addr);
-}
-
-static inline void linkmode_change_bit(int nr, volatile unsigned long *addr)
-{
-	__change_bit(nr, addr);
-}
-
-static inline int linkmode_test_bit(int nr, volatile unsigned long *addr)
-{
-	return test_bit(nr, addr);
-}
-
-static inline int linkmode_equal(const unsigned long *src1,
-				 const unsigned long *src2)
-{
-	return bitmap_equal(src1, src2, __ETHTOOL_LINK_MODE_MASK_NBITS);
-}
-#else /* !NEED_LINKMODE_ZERO */
-#include <linux/linkmode.h>
-#endif /* NEED_LINKMODE_ZERO */
-
-#ifdef NEED_LINKMODE_SET_BIT_ARRAY
-static inline void linkmode_set_bit_array(const int *array, int array_size,
-					  unsigned long *addr)
-{
-	int i;
-
-	for (i = 0; i < array_size; i++)
-		linkmode_set_bit(array[i], addr);
-}
-#endif /* NEED_LINKMODE_SET_BIT_ARRAY */
+#endif /* !HAVE_LINKMODE */
 
 #ifdef NEED_ETHTOOL_LINK_MODE_BIT_INDICES
 /* Link mode bit indices */
@@ -2705,38 +2563,6 @@ static inline void _kc_devm_kfree(struct device *dev, const void *p)
 #define devm_kzalloc(dev, size, flags) kzalloc(size, flags)
 #endif /* NEED_DEVM_KZALLOC */
 
-#ifdef NEED_DEVM_KCALLOC
-/* NEED_DEVM_KCALLOC
- *
- * Since commit 64c862a839a8 ("devres: add kernel standard devm_k.alloc
- * functions"), the kernel has provided several devres variants of the
- * standard allocation functions.
- */
-#define devm_kcalloc(dev, cnt, size, flags) \
-	devm_kzalloc(dev, array_size((cnt), (size)), flags)
-#endif /* NEED_DEVM_KCALLOC */
-
-#ifdef NEED_DEVM_KSTRDUP
-/* NEED_DEVM_KSTRDUP
- *
- * devm_kstrdup was introduced upstream by commit e31108cad3de ("devres:
- * introduce API "devm_kstrdup"").
- */
-char *_kc_devm_kstrdup(struct device *dev, const char *s, gfp_t gfp);
-#define devm_kstrdup(dev, s, gfp) _kc_devm_kstrdup(dev, s, gfp)
-#endif /* NEED_DEVM_KSTRDUP */
-
-#ifdef NEED_DEVM_KMEMDUP
-/* NEED_DEVM_KMEMDUP
- *
- * devm_kmemdup was introduced upstream by commit 3046365bb470 ("devres:
- * introduce API "devm_kmemdup").
- */
-void *_kc_devm_kmemdup(struct device *dev, const void *src, size_t len,
-		       gfp_t gfp);
-#define devm_kmemdup _kc_devm_kmemdup
-#endif /* NEED_DEVM_KMEMDUP */
-
 /* NEED_DIFF_BY_SCALED_PPM
  *
  * diff_by_scaled_ppm and adjust_by_scaled_ppm were introduced in
@@ -2808,6 +2634,7 @@ pci_msix_free_irq(struct pci_dev __always_unused *dev,
 }
 #endif /* !HAVE_PCI_MSIX_FREE_IRQ */
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(5,15,0)
 #ifdef NEED_PCIE_PTM_ENABLED
 /* NEED_PCIE_PTM_ENABLED
  *
@@ -2817,6 +2644,7 @@ pci_msix_free_irq(struct pci_dev __always_unused *dev,
  * It is easy to implement directly.
  */
 static inline bool pcie_ptm_enabled(struct pci_dev *dev)
+//inline bool pcie_ptm_enabled(struct pci_dev *dev)
 {
 #if defined(HAVE_STRUCT_PCI_DEV_PTM_ENABLED) && defined(CONFIG_PCIE_PTM)
 	if (!dev)
@@ -2828,6 +2656,7 @@ static inline bool pcie_ptm_enabled(struct pci_dev *dev)
 #endif /* HAVE_STRUCT_PCI_DEV_PTM_ENBED && CONFIG_PCIE_PTM */
 }
 #endif /* NEED_PCIE_PTM_ENABLED */
+#endif /* Linux version 5.15.0 */
 
 /* NEED_PCI_ENABLE_PTM
  *
@@ -3045,10 +2874,6 @@ static inline void assign_bit(long nr, unsigned long *addr, bool value)
 }
 #endif /* NEED_ASSIGN_BIT */
 
-#ifdef NEED_BITS_TO_U32
-#define BITS_TO_U32(nr)		__KERNEL_DIV_ROUND_UP(nr, BITS_PER_TYPE(u32))
-#endif /* NEED_BITS_TO_U32 */
-
 /*
  * __has_builtin is supported on gcc >= 10, clang >= 3 and icc >= 21.
  * In the meantime, to support gcc < 10, we implement __has_builtin
@@ -3145,24 +2970,20 @@ enum netdev_xdp_act {
 typedef u32 xdp_features_t;
 
 static inline void
-xdp_set_features_flag(struct net_device __always_unused *dev,
-		      xdp_features_t __always_unused val)
+xdp_set_features_flag(struct net_device *dev, xdp_features_t val)
+{
+}
+
+static inline void xdp_clear_features_flag(struct net_device *dev)
 {
 }
 
 static inline void
-xdp_clear_features_flag(struct net_device __always_unused *dev)
+xdp_features_set_redirect_target(struct net_device *dev, bool support_sg)
 {
 }
 
-static inline void
-xdp_features_set_redirect_target(struct net_device __always_unused *dev,
-				 bool __always_unused support_sg)
-{
-}
-
-static inline void
-xdp_features_clear_redirect_target(struct net_device __always_unused *dev)
+static inline void xdp_features_clear_redirect_target(struct net_device *dev)
 {
 }
 #endif /* NEED_XDP_FEATURES */
@@ -3424,18 +3245,6 @@ enum dpll_lock_status_error {
 #define dpll_netdev_pin_clear netdev_dpll_pin_clear
 #endif /* NEED_DPLL_NETDEV_PIN_SET */
 
-#ifdef NEED_DPLL_TRACKER
-#ifdef CONFIG_DPLL
-#include <linux/dpll.h>
-#define dpll_device_get(clock_id, device_idx, module, tracker) \
-	dpll_device_get(clock_id, device_idx, module)
-#define dpll_device_put(dpll, tracker) dpll_device_put(dpll)
-#define dpll_pin_get(clock_id, pin_idx, module, prop, tracker) \
-	dpll_pin_get(clock_id, pin_idx, module, prop)
-#define dpll_pin_put(pin, tracker) dpll_pin_put(pin)
-#endif /* CONFIG_DPLL */
-#endif /* NEED_DPLL_TRACKER */
-
 #ifdef NEED_RADIX_TREE_EMPTY
 static inline bool radix_tree_empty(struct radix_tree_root *root)
 {
@@ -3616,76 +3425,4 @@ static inline const char *str_yes_no(bool v)
 		atomic_t refs;
 	} refcount_t;
 #endif /* HAVE_LINUX_REFCOUNT_TYPES_HEADER && HAVE_LINUX_REFCOUNT_HEADER */
-
-#ifdef NEED_TIMER_DELETE
-#define timer_delete del_timer
-#define timer_delete_sync del_timer_sync
-#endif /* NEED_TIMER_DELETE */
-
-/* Since commit 3652117f8548 ("eventfd: simplify eventfd_signal()") the
- * eventfd_signal() function only takes a single argument. The second
- * argument was only ever passed as 1.
- */
-#ifdef NEED_EVENTFD_SIGNAL_NO_COUNTER
-static inline
-void _kc_eventfd_signal(struct eventfd_ctx *ctx)
-{
-	eventfd_signal(ctx, 1);
-}
-#define eventfd_signal(ctx) _kc_eventfd_signal(ctx)
-#endif /* NEED_EVENTFD_SIGNAL_NO_COUNTER */
-
-#ifdef NEED_TIMER_CONTAINER_OF
-#define timer_container_of(var, callback_timer, timer_fieldname) \
-	from_timer(var, callback_timer, timer_fieldname)
-#endif /* NEED_TIMER_CONTAINER_OF */
-
-/*
- * Some legacy kernels lack TCP_MIN_MSS in <net/tcp.h>.  Provide a portable
- * lower bound so driver code can validate MSS (e.g., avoid zero/tiny values).
- */
-#ifndef TCP_MIN_MSS
-#define TCP_MIN_MSS 88U
-#endif
-
-#ifdef NEED_DEFINE_SIMPLE_DEV_PM_OPS
-#define DEFINE_SIMPLE_DEV_PM_OPS(name, suspend_fn, resume_fn) \
-    SIMPLE_DEV_PM_OPS(name, suspend_fn, resume_fn)
-#endif /* NEED_DEFINE_SIMPLE_DEV_PM_OPS */
-
-#ifdef NEED_PM_SLEEP_PTR
-#define pm_sleep_ptr(_ptr) (_ptr)
-#endif /* NEED_PM_SLEEP_PTR */
-
-#ifdef NEED_MODULE_INFO_WITHOUT_CHECK
-/* upstream commit ae83f3b72621 ("module: Add compile-time check for embedded
- * NUL characters") added an assert preventing embedding dishonest licenses,
- * like "GPL\0, but proprietary for XXX part". Unfortunately __builtin_strlen()
- * used does not work in some of our CI builds, so just remove that (essentially
- * "reverting" the upstream commit).
- */
-#include <linux/moduleparam.h>
-#undef MODULE_INFO
-#define MODULE_INFO(tag, info)					\
-	static const char __UNIQUE_ID(modinfo)[]		\
-	__used __section(".modinfo") __aligned(1)		\
-	= __MODULE_INFO_PREFIX __stringify(tag) "=" info
-#endif /* NEED_MODULE_INFO_WITHOUT_CHECK */
-
-#ifndef HAVE_RESOURCE_SET_SIZE
-void resource_set_size(struct resource *res, resource_size_t size);
-#endif /* !HAVE_RESOURCE_SET_SIZE */
-#ifndef HAVE_RESOURCE_SET_RANGE
-void resource_set_range(struct resource *res, resource_size_t start,
-			resource_size_t size);
-#endif /* !HAVE_RESOURCE_SET_RANGE */
-
-#ifdef NEED___COUNTED_BY
-#ifdef HAVE_CONFIG_CC_HAS_COUNTED_BY
-# define __counted_by(member)		__attribute__((__counted_by__(member)))
-#else
-# define __counted_by(member)
-#endif /* HAVE_CONFIG_CC_HAS_COUNTED_BY */
-#endif /* NEED___COUNTED_BY */
-
 #endif /* _KCOMPAT_IMPL_H_ */
