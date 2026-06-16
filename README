@@ -1,3 +1,12 @@
+This is the modified igb base driver for proprietary hardware "board 2409"
+added features:
+- GNSS disciplined oscillator
+- temperature sensor under the OCXO
+- DPLL jitter cleaner
+- calibration values stored in eeprom
+- timestamping SDP pin feature
+
+
 igb Linux* Base Driver for Intel(R) Ethernet Network Connection
 ***************************************************************
 
