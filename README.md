@@ -2,11 +2,14 @@ This is the modified igb base driver for proprietary hardware "board 2409"
 **************************************************************************
 
 * added features:
-  * GNSS disciplined oscillator
-  * temperature sensor under the OCXO
-  * DPLL jitter cleaner
-  * calibration values stored in eeprom
-  * timestamping SDP pin feature
+  - [x] GNSS disciplined oscillator
+  - [x] temperature sensor under the OCXO
+  - [x] DPLL jitter cleaner
+  - [x] calibration values stored in eeprom
+  - [x] timestamping SDP pin feature
+  - [x] VCO DAC
+  - [ ] RTC M41T81 automatic calibration
+  - [ ] optional DCO clock steering
 
 ![board2409-7 picture](docs/images/24097-1.jpg?raw=true)
 ![chrony stats](docs/images/chrony-sources-stats.jpg?raw=true)
