@@ -732,14 +732,13 @@ static int igb_ptp_enable_i210(struct ptp_clock_info *ptp,
         struct igb_adapter * adapter = container_of(ptp, struct igb_adapter, ptp_caps);
         struct e1000_hw * hw = &adapter->hw;
         u32 regval;
-//      struct timespec ts;
         struct timespec64 ts;
 
         switch(rq->type) {
 
                 case PTP_CLK_REQ_EXTTS:
                         igb_ptp_switch_extts(ptp, rq, on);
-//4sep2019
+
                         printk("%s (%d) Timestamping on channel %d %s %s\n",__FUNCTION__,__LINE__, rq->extts.index, adapter->netdev->name,(rq->extts.flags&PTP_ENABLE_FEATURE)?"enabled":"disabled");
                 break;
                 case PTP_CLK_REQ_PEROUT:
@@ -1431,7 +1430,6 @@ void igb_ptp_init(struct igb_adapter *adapter)
 		adapter->ptp_caps.gettime = igb_ptp_gettime32_i210;
 		adapter->ptp_caps.settime = igb_ptp_settime32_i210;
 #endif
-		adapter->ptp_caps.enable = igb_ptp_enable;
                 adapter->ptp_caps.enable = igb_ptp_enable_i210;
                 adapter->ptp_caps.verify = igb_ptp_verify_pin;
 		/* Enable the timer functions by clearing bit 31. */
@@ -1562,6 +1560,10 @@ void igb_ptp_reset(struct igb_adapter *adapter)
 		/* No work to do. */
 		return;
 	}
+
+        cancel_work_sync(&adapter->ptp_extts0_work);
+        cancel_work_sync(&adapter->ptp_extts1_work);
+        cancel_work_sync(&adapter->ptp_fire_pps_event_work);
 
 	/* Re-initialize the timer. */
 	if ((hw->mac.type == e1000_i210) || (hw->mac.type == e1000_i211)) {

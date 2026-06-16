@@ -9143,6 +9143,7 @@ static irqreturn_t igb_msix_other(int irq, void *data)
                         /* process the external event */
                         schedule_work(&adapter->ptp_extts1_work);
                 }
+
                 E1000_WRITE_REG(hw, E1000_TSICR, tsicr);
 
                 igb_tsync_interrupt(adapter);
@@ -12408,7 +12409,7 @@ static void igb_io_resume(struct pci_dev *pdev)
 	}
 
 	if (netif_running(netdev)) {
-			if (!test_bit(__IGB_DOWN, &adapter->state)) {
+			if (!test_bit(__IGB_DOWN, adapter->state)) {
 			dev_dbg(pci_dev_to_dev(pdev), "Resuming from non-fatal error, do nothing.\n");
 			return;
 		}
