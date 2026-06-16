@@ -5,7 +5,7 @@ This is the modified igb base driver for proprietary hardware "board 2409"
   - [x] GNSS disciplined oscillator
   - [x] temperature sensor under the OCXO
   - [x] DPLL jitter cleaner
-  - [x] DPLL firmware loading "/lib/firmware/octo/2409/LMK05318/HexRegisterValues-<dipswitch>.txt"
+  - [x] DPLL firmware loading
   - [x] calibration values stored in eeprom
   - [x] timestamping SDP pin feature
   - [x] VCO DAC
