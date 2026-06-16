@@ -12408,6 +12408,10 @@ static void igb_io_resume(struct pci_dev *pdev)
 	}
 
 	if (netif_running(netdev)) {
+			if (!test_bit(__IGB_DOWN, &adapter->state)) {
+			dev_dbg(pci_dev_to_dev(pdev), "Resuming from non-fatal error, do nothing.\n");
+			return;
+		}
 		igb_up(adapter);
 	}
 
