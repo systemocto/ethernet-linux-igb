@@ -722,6 +722,7 @@ struct igb_adapter {
 	struct i2c_client *i2c_client;
 #endif /* HAVE_I2C_SUPPORT */
 
+	struct hwmon_buff igb_hwmon_buff2;
         struct i2c_algo_bit_data i2c_algo2;
         struct i2c_adapter i2c_adap2;
         struct i2c_client *i2c_client2;
@@ -731,6 +732,7 @@ struct igb_adapter {
         struct i2c_client *i2c_rtc;
         struct i2c_client *i2c_dac1;
         struct i2c_client *i2c_dac2;
+        struct i2c_client *i2c_adc;
         struct i2c_client *i2c_gps;
         struct i2c_client *i2c_tmp;
         struct i2c_client *i2c_tmpocxo;
@@ -991,6 +993,9 @@ void igb_vlan_mode(struct net_device *, u32);
 
 int igb_ptp_set_ts_config(struct net_device *netdev, struct ifreq *ifr);
 int igb_ptp_get_ts_config(struct net_device *netdev, struct ifreq *ifr);
+
+void igb_sysfs_exit2(struct igb_adapter *adapter);
+int igb_sysfs_init2(struct igb_adapter *adapter);
 #ifdef IGB_HWMON
 void igb_sysfs_exit(struct igb_adapter *adapter);
 int igb_sysfs_init(struct igb_adapter *adapter);

@@ -2290,9 +2290,9 @@ static struct i2c_board_info cdce813_info = {
         I2C_BOARD_INFO("cdce813_1", 0x65),
 };
 
-//struct i2c_board_info tmp_info = {
-//      I2C_BOARD_INFO("tmp102_1", (0x48)),
-//};
+struct i2c_board_info tmp_info = {
+      I2C_BOARD_INFO("tmp102_1", (0x49)),
+};
 
 static struct i2c_board_info tmp_2_info = {
         I2C_BOARD_INFO("tmp102_2", (0x4a)),
@@ -2324,7 +2324,7 @@ static s32 igb_init_i2c(struct igb_adapter *adapter)
         struct i2c_client *i2c_cdce813; // 0x65
         //struct i2c_client *i2c_gps; // 0x42
         //struct i2c_client *i2c_adc; // 0x48
-        //struct i2c_client *i2c_tmp; // 0x49
+        struct i2c_client *i2c_tmp; // 0x49
         struct i2c_client *i2c_tmpocxo; // 0x4a
         struct i2c_client *i2c_eeprom; // 0x50
         struct i2c_client *i2c_dac1; // 0x60 VCO
@@ -2794,8 +2794,6 @@ enum led_brightness igb_led_get(struct igb_adapter *adapter, int led)
 static int igb_led0_set(struct led_classdev *ldev, enum led_brightness b)
 {
         struct igb_adapter *adapter = led_to_igb(ldev, led0);
-
-// aanroepende pid van igb_led1_set iets mee doen?
 
         igb_led_set(adapter, 0, b);
         return 0;
@@ -5325,6 +5323,17 @@ if (adapter->xtalcal) {
 		adapter->ets = false;
 	}
 
+#ifdef IGB_HWMON
+#ifdef HAVE_I2C_SUPPORT
+// tmp102
+	if (hw->mac.type == e1000_i210 ||
+		hw->mac.type == e1000_i211) {
+		if(adapter->i2c_tmpocxo) igb_sysfs_init2(adapter);
+	}
+#endif /* HAVE_I2C_SUPPORT */
+#endif /* IGB_HWMON */
+
+
 	if (hw->phy.media_type == e1000_media_type_copper) {
 		switch (hw->mac.type) {
 		case e1000_i350:
@@ -5505,6 +5514,7 @@ static void igb_remove(struct pci_dev *pdev)
 
 #ifdef IGB_HWMON
 	igb_sysfs_exit(adapter);
+	igb_sysfs_exit2(adapter);
 #else
 #ifdef IGB_PROCFS
 	igb_procfs_exit(adapter);

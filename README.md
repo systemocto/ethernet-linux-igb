@@ -8,6 +8,7 @@ This is the modified igb base driver for proprietary hardware "board 2409"
   - [x] calibration values stored in eeprom
   - [x] timestamping SDP pin feature
   - [x] VCO DAC
+  - [x] temp sensor /sys/class/hwmon
   - [ ] RTC M41T81 automatic calibration
   - [ ] optional DCO clock steering
 

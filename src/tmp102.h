@@ -1,3 +1,6 @@
+#ifndef _TMP102_
+#define _TMP102_
+
 #define TMP102_TEMP_REG                 0x00
 #define TMP102_CONF_REG                 0x01
 /* note: these bit definitions are byte swapped */
@@ -70,3 +73,4 @@ int tmp102_read_alert (struct i2c_client *client ){
     val = (regval & 0x0020) ;
 return val != 0x0020;
 }
+#endif /* _TMP102_ */

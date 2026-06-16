@@ -17,6 +17,7 @@ define igb-y
 	e1000_api.o
 	igb_ethtool.o
 	igb_hwmon.o
+	igb_hwmon-2409.o
 	e1000_mbx.o
 	e1000_mac.o
 	e1000_manage.o
