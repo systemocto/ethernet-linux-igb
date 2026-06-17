@@ -7597,6 +7597,20 @@ mutex_unlock(&adapter->lmk_mutex);
                         dpll_hist = (lmkregs[14] & 0x20) ? 0x01 : 0x00;
                         dpll_hold = (lmkregs[14] & 0x10) ? 0x01 : 0x00;
                         dpll_refswitch = (lmkregs[14] & 0x08) ? 0x01 : 0x00;
+			adapter->dpll_flags = dpll_pl ? 0 : DPLL_FLAGS_LOPL_DPLL +
+				dpll_fl ? 0 : DPLL_FLAGS_LOFL_DPLL +
+				dpll_hold ? DPLL_FLAGS_HLDOVR : 0;
+
+/*
+eec_holdover_value         4
+eec_locked_ho_value        3
+eec_locked_value           2
+eec_freerun_value          1
+eec_invalid_value          0
+*/
+// TODO
+//        adapter->dpll_flags; //DPLL_FLAGS_LOPL_DPLL DPLL_FLAGS_LOFL_DPLL DPLL_FLAGS_HLDOVR
+
 
 // dpll_hist RTC Software clock calibration
                 if(!init || (lmkregs[14] & 0x20) != (lmkregs_old[14] & 0x20) ) {

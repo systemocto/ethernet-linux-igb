@@ -495,6 +495,7 @@ struct igb_therm_proc_data {
 #define IGB_HWMON_TYPE_TEMP	1
 #define IGB_HWMON_TYPE_CAUTION	2
 #define IGB_HWMON_TYPE_MAX	3
+#define IGB_HWMON_TYPE_DPLL	4
 
 struct hwmon_attr {
 	struct device_attribute dev_attr;
@@ -554,6 +555,10 @@ enum e1000_state_t {
 	__IGB_PTP_TX_IN_PROGRESS,
 	__IGB_STATE_SIZE
 };
+
+#define DPLL_FLAGS_LOPL_DPLL	0x1
+#define DPLL_FLAGS_LOFL_DPLL	0x2
+#define DPLL_FLAGS_HLDOVR	0x4
 
 /* board specific private data structure */
 struct igb_adapter {
@@ -777,6 +782,7 @@ struct igb_adapter {
         int dco_step; // 0:DPLL_FDEV_EN=0, >0:DPLL_FDEV=dco_step
         int dco_inc;
         int dco_dec;
+        int dpll_flags; //DPLL_FLAGS_LOPL_DPLL DPLL_FLAGS_LOFL_DPLL DPLL_FLAGS_HLDOVR
 
         int map_led0; // lmkregh 1b, lmkregl 0x000-0x19b = R0-R411
         int map_led0_mask; // 5 unused + sys/fw + 1 invert + 1 and/or + 8 mask bits

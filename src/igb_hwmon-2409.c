@@ -92,6 +92,42 @@ static ssize_t igb_hwmon_show_maxopthresh(struct device *dev,
 	return sprintf(buf, "%u\n", value);
 }
 
+static ssize_t igb_hwmon_show_dpll(struct device *dev,
+				     struct device_attribute *attr,
+				     char *buf)
+{
+	struct hwmon_attr *igb_attr = container_of(attr, struct hwmon_attr,
+						     dev_attr);
+
+        struct igb_adapter *adapter = container_of(igb_attr->hw, struct igb_adapter, hw);
+
+	int value = 0;
+	int i = igb_attr->name[5] - 0x30; //dpll_%u_state
+
+/*
+convert flags to value:
+        adapter->dpll_flags; //DPLL_FLAGS_LOPL_DPLL DPLL_FLAGS_LOFL_DPLL DPLL_FLAGS_HLDOVR
+eec_holdover_value         4
+eec_locked_ho_value        3
+eec_locked_value           2
+eec_freerun_value          1
+eec_invalid_value          0
+*/
+	if(i == 0) {
+		if(adapter->i2c_lmk05318b) {
+			value = 1;
+			if((adapter->dpll_flags & DPLL_FLAGS_LOFL_DPLL) == 0) value = 3;
+			if((adapter->dpll_flags & DPLL_FLAGS_LOPL_DPLL) == 0) value = 2;
+			if((adapter->dpll_flags & DPLL_FLAGS_HLDOVR) == 1) value = 4;
+		}
+	} else if(i == 1) {
+		if(adapter->i2c_tmp) value = tmp102_read(adapter->i2c_tmp);
+	}
+
+	return sprintf(buf, "%i\n", value);
+}
+
+
 /* igb_add_hwmon_attr - Create hwmon attr table for a hwmon sysfs file.
  * @ adapter: pointer to the adapter structure
  * @ offset: offset in the eeprom sensor data table
@@ -134,6 +170,12 @@ static int igb_add_hwmon_attr(struct igb_adapter *adapter,
 		snprintf(igb_attr->name, sizeof(igb_attr->name),
 			 "temp%u_crit", offset);
 //		netdev_err(adapter->netdev, "sysfs hwmon TMP102 igb_add_hwmon_attr MAX");
+		break;
+	case IGB_HWMON_TYPE_DPLL:
+		igb_attr->dev_attr.show = igb_hwmon_show_dpll;
+		snprintf(igb_attr->name, sizeof(igb_attr->name),
+			 "dpll_%u_state", offset);
+//		netdev_err(adapter->netdev, "sysfs hwmon TMP102 igb_add_hwmon_attr DPLL");
 		break;
 	default:
 		rc = -EPERM;
@@ -202,7 +244,7 @@ int igb_sysfs_init2(struct igb_adapter *adapter)
 	/* Allocation space for max attributes
 	 * max num sensors * values (loc, temp, max, caution)
 	 */
-	n_attrs = BOARD2409_MAX_SENSORS * 4;
+	n_attrs = BOARD2409_MAX_SENSORS * 5;
 	igb_hwmon->hwmon_list = kcalloc(n_attrs, sizeof(struct hwmon_attr),
 					  GFP_KERNEL);
 	if (!igb_hwmon->hwmon_list) {
@@ -235,6 +277,7 @@ int igb_sysfs_init2(struct igb_adapter *adapter)
 		rc |= igb_add_hwmon_attr(adapter, i, IGB_HWMON_TYPE_LOC);
 		rc |= igb_add_hwmon_attr(adapter, i, IGB_HWMON_TYPE_TEMP);
 //		rc |= igb_add_hwmon_attr(adapter, i, IGB_HWMON_TYPE_MAX);
+		rc |= igb_add_hwmon_attr(adapter, i, IGB_HWMON_TYPE_DPLL);
 		if (rc)
 			goto err;
 	}
