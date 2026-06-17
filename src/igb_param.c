@@ -113,9 +113,9 @@ IGB_PARAM(LLISize,
  * Default Value:  1
  */
 IGB_PARAM(RSS,
-	"Number of Receive-Side Scaling Descriptor Queues (0-8), default 1, 0=number of cpus");
+	"Number of Receive-Side Scaling Descriptor Queues (0-8), default 4, 0=number of cpus");
 
-#define DEFAULT_RSS       1
+#define DEFAULT_RSS       4
 #define MAX_RSS           8
 #define MIN_RSS           0
 

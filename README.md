@@ -6,12 +6,24 @@ This is the modified igb base driver for proprietary hardware "board 2409"
   - [x] temperature sensor under the OCXO
   - [x] DPLL jitter cleaner
   - [x] DPLL firmware loading
+  - [x] DPLL state in dpll_0_stat
   - [x] calibration values stored in eeprom
   - [x] timestamping SDP pin feature
   - [x] VCO DAC
   - [x] temp sensor /sys/class/hwmon
   - [ ] RTC M41T81 automatic calibration
   - [ ] optional DCO clock steering
+
+
+* solder jumper/switch
+  - JP5: i210 clock select
+     - 1-2: local oscillator, free running
+     - 2-3: DPLL (1)
+     - 1-2-3: DPLL with local oscillator backup (2)
+
+ note: after firmware loading or manual DPLL reset there will be (2) a brief link down/up
+ or (1) the card will fall off the bus (message "PCIe link lost").
+
 
 ![board2409-7 picture](docs/images/24097-1.jpg?raw=true)
 ![chrony stats](docs/images/chrony-sources-stats.jpg?raw=true)

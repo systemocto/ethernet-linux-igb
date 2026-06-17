@@ -4241,7 +4241,8 @@ int igb_init_vmdq_netdevs(struct igb_adapter *adapter)
 	struct igb_vmdq_adapter *vmdq_adapter;
 
 	for (pool = 1; pool < adapter->vmdq_pools; pool++) {
-		int qpp = (!adapter->rss_queues ? 1 : adapter->rss_queues);
+//		int qpp = (!adapter->rss_queues ? 1 : adapter->rss_queues);
+		int qpp = (!adapter->rss_queues ? adapter->vmdq_pools : adapter->rss_queues);
 
 		base_queue = pool * qpp;
 		vnetdev = alloc_etherdev(sizeof(struct igb_vmdq_adapter));
