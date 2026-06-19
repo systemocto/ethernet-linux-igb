@@ -25,9 +25,24 @@ This is the modified igb base driver for proprietary hardware "board 2409"
  or (1) the card will fall off the bus (message "PCIe link lost").
 
 
+* SyncE or not? 
+Although we have a physical layer that is phase-synchronized to GNSS reference, this NIC isn't a true SyncE device.
+It has no capability to recover the clock FROM ethernet.
+PTP in leader/follower mode, SyncE only in master mode.
+At this moment there is experimental legacy support for Linux dpll subsystem: dpll_0_stat.
+
+eec_get_state_cmd          cat /sys/class/hwmon/hwmon1/device/dpll_0_stat
+eec_holdover_value         4
+eec_locked_ho_value        3
+eec_locked_value           2
+eec_freerun_value          1
+eec_invalid_value          0
+
+
 ![board2409-7 picture](docs/images/24097-1.jpg?raw=true)
 ![chrony stats](docs/images/chrony-sources-stats.jpg?raw=true)
 ![holdover](docs/images/DPLL-holdover.jpg?raw=true)
+
 
 
 ***************************************************************

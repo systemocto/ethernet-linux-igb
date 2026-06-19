@@ -371,10 +371,6 @@ static int lmkocxotemp = 55;
 module_param(lmkocxotemp, int, S_IRUSR | S_IWUSR);
 MODULE_PARM_DESC(lmkocxotemp, "OCXO temperature thresshold (default 55 C)");
 
-//static int lmkaddr = 0x64;
-//module_param(lmkaddr, int, S_IRUSR | S_IWUSR);
-//MODULE_PARM_DESC(lmkaddr, "LMK05318B address (default 0x64)");
-
 static int dco_step = 0x00;
 module_param(dco_step, int, S_IRUSR | S_IWUSR);
 MODULE_PARM_DESC(dco_step, "LMK05318B DPLL_FDEV (default 0x00, max 0x1fffff)");
@@ -2282,7 +2278,6 @@ struct i2c_board_info dac2_info = {
 };
 
 struct i2c_board_info lmk05318b_info = {
-//        I2C_BOARD_INFO("lmk05318b_1", (lmkaddr)), // 0x64
         I2C_BOARD_INFO("lmk05318b_1", 0x64),
 };
 
@@ -5068,7 +5063,7 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
         }
 
                                                                                 
-        if( part_boardfeatures & 0x0200 && adapter->i2c_lmk05318b ) {
+        if( part_boardfeatures & 0x0200 && adapter->i2c_lmk05318b && lmkfw != 0) {
                 char fwname[200];
                 u8 res, lmkregs_old[512];
 		int i, rNVMCRCERR, rNVMSCRC, rNVMLCRC;
@@ -5094,8 +5089,6 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                         snprintf(fwname, sizeof(fwname), "%s%s", LMK05318_HEXREGVAL_FILE, ".txt" );
                         err = request_firmware(&firmware, fwname, &pdev->dev);
                         if (err) {
-                                //int i, rNVMCRCERR, rNVMSCRC, rNVMLCRC;
-
                                 // checking that the NVMCRCERR (R157[5]) = 0, and that NVMSCRC (R155) matches NVMLCRC (R158). details R158 description in the programming manual
                                 i = 157;//rNVMCRCERR
                                 i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, i >> 8, i & 0x00ff );
@@ -7453,7 +7446,7 @@ static void igb_dpll_task(struct work_struct *work)
                                                 res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x00, (0x0C) | (0x1B << 8));
                                         }
                                         if (adapter->dac1val_hist > 0) dacval--; else if (adapter->dac1val_hist < 0) dacval++;
-                                        dev_info(&adapter->pdev->dev, "VC-OCXO servo %s: %s DAC:%i %i %i, hist:%i\n", !(lmkregs[14] & 0x40) ? "enabled" : "disabled (LOFL)", res == 0 ? "===" : res > 0 ? "hi" : "lo", dacval_old, dacval, 
+                                        dev_info(&adapter->pdev->dev, "VC-OCXO %s: %s DAC:%i %i %i, hist:%i\n", !(lmkregs[14] & 0x40) ? "" : "servo disabled (LOFL)", res == 0 ? "===" : res > 0 ? "hi" : "lo", dacval_old, dacval, 
                                                 adapter->dac1val, adapter->dac1val_hist);
                                         if(dacval_old != dacval) { adapter->dac1val_hist = 0; adapter->dac1val = dacval_old = dacval; mcp4725_set_value(adapter ); }
 
