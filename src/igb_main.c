@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Copyright(c) 2007 - 2026 Intel Corporation. */
 
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/init.h>
@@ -50,18 +51,32 @@
 #define del_timer_sync timer_delete_sync
 #endif
 
+
+
+/*
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)
+#ifndef eth_hw_addr_set
 static inline void eth_hw_addr_set(struct net_device *dev, const u8 *addr)
 {
     memcpy(dev->dev_addr, addr, ETH_ALEN);
 }
-
-
-static inline struct i2c_client * i2c_new_client_device(struct i2c_adapter *adap, struct i2c_board_info const *info)
-{
-        return i2c_new_device(adap, info);
-}
 #endif
+#endif
+*/
+
+static inline struct i2c_client *i2c_new_client_device1(struct i2c_adapter *adap, struct i2c_board_info const *info)
+{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,8,0)
+#include <linux/err.h>
+        struct i2c_client *client = i2c_new_device(adap, info);
+        if (!client)
+                return ERR_PTR(-ENODEV);
+        return client;
+#else
+        return i2c_new_client_device(adap, info);
+#endif
+}
+
 
 #if defined(DEBUG) || defined(DEBUG_DUMP) || defined(DEBUG_ICR) \
 	|| defined(DEBUG_ITR)
@@ -2369,7 +2384,8 @@ static s32 igb_init_i2c(struct igb_adapter *adapter)
 if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
 
 
-                strlcpy(adapter->i2c_adap2.name, "igb SDP",
+//                strlcpy(adapter->i2c_adap2.name, "igb SDP",
+                strscpy(adapter->i2c_adap2.name, "igb SDP",
                         sizeof(adapter->i2c_adap2.name));
 
                 if(i2c_bus >= 0) {
@@ -2387,7 +2403,7 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
         // init i2c_clients
 
 //        i2c_dipsw = i2c_new_device(&adapter->i2c_adap2, &pcf8574_1_info);
-        i2c_dipsw = i2c_new_client_device(&adapter->i2c_adap2, &pcf8574_1_info);
+        i2c_dipsw = i2c_new_client_device1(&adapter->i2c_adap2, &pcf8574_1_info);
         if (i2c_dipsw == NULL) {
                 dev_info(&adapter->pdev->dev,
                          "Failed to create i2c device pcf8574_1.\n");
@@ -2395,7 +2411,7 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
         }
 
 //        i2c_gpi2 = i2c_new_device(&adapter->i2c_adap2, &pcf8574_2_info);
-        i2c_gpi2 = i2c_new_client_device(&adapter->i2c_adap2, &pcf8574_2_info);
+        i2c_gpi2 = i2c_new_client_device1(&adapter->i2c_adap2, &pcf8574_2_info);
         if (i2c_gpi2 == NULL) {
                 dev_info(&adapter->pdev->dev,
                          "Failed to create i2c device pcf8574_2.\n");
@@ -2406,7 +2422,7 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
                 i2c_unregister_device(i2c_dipsw);
                 adapter->i2c_dipsw = 0;
 //                i2c_dipsw = i2c_new_device(&adapter->i2c_adap2, &pca9557_1_info);
-                i2c_dipsw = i2c_new_client_device(&adapter->i2c_adap2, &pca9557_1_info);
+                i2c_dipsw = i2c_new_client_device1(&adapter->i2c_adap2, &pca9557_1_info);
                 if (i2c_dipsw == NULL) {
                         dev_info(&adapter->pdev->dev,
                                  "Failed to create i2c device pca9557_1.\n");
@@ -2433,7 +2449,7 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
 
 
 //        i2c_tmpocxo = i2c_new_device(&adapter->i2c_adap2, &tmp_2_info);
-        i2c_tmpocxo = i2c_new_client_device(&adapter->i2c_adap2, &tmp_2_info);
+        i2c_tmpocxo = i2c_new_client_device1(&adapter->i2c_adap2, &tmp_2_info);
         if (i2c_tmpocxo == NULL) {
                 dev_info(&adapter->pdev->dev,
                          "Failed to create i2c device tmp_2.\n");
@@ -2447,8 +2463,23 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
                 }
         }
 
+//        i2c_tmp = i2c_new_device(&adapter->i2c_adap2, &tmp_info);
+        i2c_tmp = i2c_new_client_device1(&adapter->i2c_adap2, &tmp_info);
+        if (i2c_tmp == NULL) {
+                dev_info(&adapter->pdev->dev,
+                         "Failed to create i2c device tmp_2.\n");
+        } else {
+                ret = i2c_smbus_read_byte_data(i2c_tmp, 0);
+                if ( ret < 0 ) {
+                        i2c_unregister_device(i2c_tmp);
+                        adapter->i2c_tmp = 0;
+                } else {
+                        adapter->i2c_tmp = i2c_tmp;
+                }
+        }
+
 //        i2c_pca9557_19 = i2c_new_device(&adapter->i2c_adap2, &pca9557_2_info);
-        i2c_pca9557_19 = i2c_new_client_device(&adapter->i2c_adap2, &pca9557_2_info);
+        i2c_pca9557_19 = i2c_new_client_device1(&adapter->i2c_adap2, &pca9557_2_info);
         if (i2c_pca9557_19 == NULL) {
                 dev_info(&adapter->pdev->dev,
                          "Failed to create i2c device pca9557_2.\n");
@@ -2463,7 +2494,7 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
         }
 
 //        i2c_cdce813 = i2c_new_device(&adapter->i2c_adap2, &cdce813_info);
-        i2c_cdce813 = i2c_new_client_device(&adapter->i2c_adap2, &cdce813_info);
+        i2c_cdce813 = i2c_new_client_device1(&adapter->i2c_adap2, &cdce813_info);
         if (i2c_cdce813 == NULL) {
                 dev_info(&adapter->pdev->dev,
                          "Failed to create i2c device cdce813.\n");
@@ -2479,7 +2510,7 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
         }
 
 //        i2c_lmk05318b = i2c_new_device(&adapter->i2c_adap2, &lmk05318b_info);
-        i2c_lmk05318b = i2c_new_client_device(&adapter->i2c_adap2, &lmk05318b_info);
+        i2c_lmk05318b = i2c_new_client_device1(&adapter->i2c_adap2, &lmk05318b_info);
         if (i2c_lmk05318b == NULL) {
                 dev_info(&adapter->pdev->dev,
                          "Failed to create i2c device lmk05318b.\n");
@@ -2498,7 +2529,7 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
         }
 
 //        i2c_dac1 = i2c_new_device(&adapter->i2c_adap2, &dac1_info);
-        i2c_dac1 = i2c_new_client_device(&adapter->i2c_adap2, &dac1_info);
+        i2c_dac1 = i2c_new_client_device1(&adapter->i2c_adap2, &dac1_info);
         if (i2c_dac1 == NULL) {
                 dev_info(&adapter->pdev->dev,
                          "Failed to create i2c device mcp4725_1.\n");
@@ -2514,7 +2545,7 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
         }
 
 //        i2c_dac2 = i2c_new_device(&adapter->i2c_adap2, &dac2_info);
-        i2c_dac2 = i2c_new_client_device(&adapter->i2c_adap2, &dac2_info);
+        i2c_dac2 = i2c_new_client_device1(&adapter->i2c_adap2, &dac2_info);
         if (i2c_dac2 == NULL) {
                 dev_info(&adapter->pdev->dev,
                          "Failed to create i2c device mcp4725_2.\n");
@@ -2531,7 +2562,7 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
 
 
 //        i2c_eeprom = i2c_new_device(&adapter->i2c_adap2, &eeprom_info);
-        i2c_eeprom = i2c_new_client_device(&adapter->i2c_adap2, &eeprom_info);
+        i2c_eeprom = i2c_new_client_device1(&adapter->i2c_adap2, &eeprom_info);
         if (i2c_eeprom == NULL) {
                 dev_info(&adapter->pdev->dev,
                          "Failed to create i2c device eeprom_1.\n");
@@ -2543,7 +2574,7 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
                 i2c_unregister_device(i2c_eeprom);
                 adapter->i2c_eeprom = 0;
 //                i2c_eeprom = i2c_new_device(&adapter->i2c_adap2, &eeprom2_info);
-                i2c_eeprom = i2c_new_client_device(&adapter->i2c_adap2, &eeprom2_info);
+                i2c_eeprom = i2c_new_client_device1(&adapter->i2c_adap2, &eeprom2_info);
                 if (i2c_eeprom == NULL) {
                         dev_info(&adapter->pdev->dev,
                                 "Failed to create i2c device eeprom_2.\n");
@@ -2614,7 +2645,7 @@ geen_eeprom:
 //probe RTC
         if( adapter->part_boardfeatures & 0x04) {
 //                i2c_rtc = i2c_new_device(&adapter->i2c_adap2, &rtc2_info);
-                i2c_rtc = i2c_new_client_device(&adapter->i2c_adap2, &rtc2_info);
+                i2c_rtc = i2c_new_client_device1(&adapter->i2c_adap2, &rtc2_info);
                 if (i2c_rtc == NULL) {
                         goto geen_rtc;
                 }
@@ -2625,7 +2656,7 @@ geen_eeprom:
                 adapter->i2c_rtc = 0;
                 i2c_unregister_device(i2c_rtc);
 //                i2c_rtc = i2c_new_device(&adapter->i2c_adap2, &rtc_info);
-                i2c_rtc = i2c_new_client_device(&adapter->i2c_adap2, &rtc_info);
+                i2c_rtc = i2c_new_client_device1(&adapter->i2c_adap2, &rtc_info);
                 if (i2c_rtc == NULL) {
                         goto geen_rtc;
                 }
@@ -2650,7 +2681,7 @@ geen_eeprom:
                 } else {
                         i2c_unregister_device(i2c_rtc);
 //                        i2c_rtc = i2c_new_device(&adapter->i2c_adap2, &rtc3_info);
-                        i2c_rtc = i2c_new_client_device(&adapter->i2c_adap2, &rtc3_info);
+                        i2c_rtc = i2c_new_client_device1(&adapter->i2c_adap2, &rtc3_info);
                         if (i2c_rtc == NULL) {
                                 goto geen_rtc;
                         }
@@ -7330,13 +7361,13 @@ int lmk05318_hinomlo(struct igb_adapter *adapter)
 
         val1 = 0, val2 = 0;
 //      double ratio = 1.0;
-        val1 += lmkregs[110] << 32;
+//        val1 += lmkregs[110] << 32;
         val1 += lmkregs[111] << 24;
         val1 += lmkregs[112] << 16;
         val1 += lmkregs[113] << 8;
         val1 += lmkregs[114] << 0;
 
-        val2 += lmkregs[123] << 32;
+//        val2 += lmkregs[123] << 32;
         val2 += lmkregs[124] << 24;
         val2 += lmkregs[125] << 16;
         val2 += lmkregs[126] << 8;
@@ -7357,7 +7388,7 @@ static void vcodac_task(struct work_struct *work)
 //        struct e1000_hw *hw = &adapter->hw;
 
         int res;
-        u16 dacval_old;
+        u16 dacval_old = 0;
         int dac1val_histi = 0;
         adapter->dac1val_hist = 0;
 
@@ -7389,14 +7420,13 @@ static void igb_dpll_task(struct work_struct *work)
                                                    dpll_task);
       struct e1000_hw *hw = &adapter->hw;
 
-        u8 lmkregs_old[512];
-        u8 lmkregs[512];
+        u8 lmkregs_old[512] = {0};
+        u8 lmkregs[512] = {0};
         u8 datetimestring[25];
-        u16 dacval_old;
+        u16 dacval_old = 0;
         u32 ledctl_old, ledctl2;
         u16 lmkregi;
-        int res, ocxoready = 0, ocxoready_old, init = 0;
-        int dac1val_histi = 0;
+        int res, ocxoready = 0, ocxoready_old = -1, init = 0;
         long temp = 0;
         int lmkocxotemp_l = 10;
         int lmkocxotemp_ee = 0;
@@ -7446,7 +7476,7 @@ static void igb_dpll_task(struct work_struct *work)
                                                 res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x00, (0x0C) | (0x1B << 8));
                                         }
                                         if (adapter->dac1val_hist > 0) dacval--; else if (adapter->dac1val_hist < 0) dacval++;
-                                        dev_info(&adapter->pdev->dev, "VC-OCXO %s: %s DAC:%i %i %i, hist:%i\n", !(lmkregs[14] & 0x40) ? "" : "servo disabled (LOFL)", res == 0 ? "===" : res > 0 ? "hi" : "lo", dacval_old, dacval, 
+                                        dev_info(&adapter->pdev->dev, "VC-OCXO %s: %s DAC:%i %i %i, hist:%i\n", !(lmkregs[14] & 0x40) ? "" : "servo disabled (LOFL)", res == 0 ? "===" : res > 0 ? "hi" : "lo", dacval_old, dacval,
                                                 adapter->dac1val, adapter->dac1val_hist);
                                         if(dacval_old != dacval) { adapter->dac1val_hist = 0; adapter->dac1val = dacval_old = dacval; mcp4725_set_value(adapter ); }
 
@@ -10488,9 +10518,11 @@ static bool igb_add_rx_frag(struct igb_ring *rx_ring,
 	 * 60 bytes if the skb->len is less than 60 for skb_pad.
 	 */
 //octo
-//	pull_len = eth_get_headlen(skb->dev, va, IGB_RX_HDR_LEN);
-	pull_len = eth_get_headlen(va, IGB_RX_HDR_LEN);
-
+//#if LINUX_VERSION_CODE > KERNEL_VERSION(5,15,0)
+	pull_len = eth_get_headlen(skb->dev, va, IGB_RX_HDR_LEN);
+//#else
+//	pull_len = eth_get_headlen(va, IGB_RX_HDR_LEN);
+//#endif
 	/* align pull length to size of long to optimize memcpy performance */
 	memcpy(__skb_put(skb, pull_len), va, ALIGN(pull_len, sizeof(long)));
 

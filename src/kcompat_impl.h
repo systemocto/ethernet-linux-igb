@@ -128,6 +128,7 @@ static inline bool __netdev_tx_sent_queue(struct netdev_queue *dev_queue,
  *
  * This function is trivial to re-implement in full.
  */
+#ifndef net_prefetch
 #ifdef NEED_NET_PREFETCH
 static inline void net_prefetch(void *p)
 {
@@ -137,6 +138,8 @@ static inline void net_prefetch(void *p)
 #endif
 }
 #endif /* NEED_NET_PREFETCH */
+#define net_prefetch net_prefetch
+#endif /* #ifndef net_prefetch */
 
 /* NEED_SKB_FRAG_OFF and NEED_SKB_FRAG_OFF_ADD
  *
