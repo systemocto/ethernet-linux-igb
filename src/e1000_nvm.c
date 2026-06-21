@@ -759,13 +759,13 @@ s32 igb_read_part_xtalcal3(struct e1000_hw *hw, s32 *part_xtalcal, u32 *part_osc
                 DEBUGFUNC("NVM Read Error\n");
                 goto out;
         }
-        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALL + 1, 1, &nvm_osctype);
+        ret_val = hw->nvm.ops.read(hw, NVM_OSCTYPE, 1, &nvm_osctype);
         if (ret_val) {
                 DEBUGFUNC("NVM Read Error\n");
                 goto out;
         }
 
-        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALL + 1, 1, &nvm_boardfeat);
+        ret_val = hw->nvm.ops.read(hw, NVM_BOARDFEATURES, 1, &nvm_boardfeat);
         if (ret_val) {
                 DEBUGFUNC("NVM Read Error\n");
                 goto out;
@@ -811,19 +811,19 @@ s32 igb_read_part_xtalcal4(struct e1000_hw *hw, s32 *part_xtalcal, u32 *part_osc
                 DEBUGFUNC("NVM Read Error\n");
                 goto out;
         }
-        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALL + 1, 1, &nvm_osctype);
+        ret_val = hw->nvm.ops.read(hw, NVM_OSCTYPE, 1, &nvm_osctype);
         if (ret_val) {
                 DEBUGFUNC("NVM Read Error\n");
                 goto out;
         }
 
-        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALL + 1, 1, &nvm_boardfeat);
+        ret_val = hw->nvm.ops.read(hw, NVM_BOARDFEATURES, 1, &nvm_boardfeat);
         if (ret_val) {
                 DEBUGFUNC("NVM Read Error\n");
                 goto out;
         }
 
-        ret_val = hw->nvm.ops.read(hw, NVM_XTALCALL + 2, 1, &nvm_boardfeat2);
+        ret_val = hw->nvm.ops.read(hw, NVM_BOARDFEATURES2, 1, &nvm_boardfeat2);
         if (ret_val) {
                 DEBUGFUNC("NVM Read Error\n");
                 goto out;
@@ -837,7 +837,7 @@ s32 igb_read_part_xtalcal4(struct e1000_hw *hw, s32 *part_xtalcal, u32 *part_osc
 
         part_oscillatortype[0] = nvm_osctype & 0x00ff;
         part_boardfeatures[0] = (nvm_boardfeat & 0xff00 ) >> 8;
-        part_boardfeatures[0] += nvm_boardfeat2 & 0x00ff << 8;
+        part_boardfeatures[0] += (nvm_boardfeat2 & 0x00ff) << 8;
         part_xtalcal[0] = nvm_datal + (nvm_datah << 16);
 
 out:

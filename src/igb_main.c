@@ -4440,7 +4440,8 @@ static int igb_probe(struct pci_dev *pdev,
 	static int global_quad_port_a; /* global quad port a indication */
 	int err, pci_using_dac;
 	static int cards_found;
-        s32 part_xtalcal, part_oscillatortype = -1, part_boardfeatures = 0;
+        s32 part_xtalcal, part_oscillatortype = -1;
+	u32 part_boardfeatures = 0;
         const struct firmware *firmware;
 
 #ifdef HAVE_NDO_SET_FEATURES
@@ -4991,7 +4992,6 @@ static int igb_probe(struct pci_dev *pdev,
                 ret_val = igb_read_part_xtalcal4(hw, &part_xtalcal, &part_oscillatortype, &part_boardfeatures);
                 if ((part_boardfeatures & 0xff00) == 0xff00) part_boardfeatures &= 0x00ff;
 
-
                 // part_boardfeatures valid if osctype valid
                 if(part_oscillatortype >= 0 && part_oscillatortype < 8) {
                         adapter->part_boardfeatures = part_boardfeatures;
@@ -5015,16 +5015,16 @@ static int igb_probe(struct pci_dev *pdev,
 /*
 offset 0x265 part_boardfeatures mask
 
-0x00 reserved, no features
-0x01 DAC1 (VCO)
-0x02 VCO
-0x04 RTC
-0x08 ADC/DAC2 (ADS1115/MCP4725)
-0x10 GPI2 (PCF8574)
-0x20 Temp sensor (TMP102)
-0x40 eeprom
-0x80 ->format2 @ offset 0x266-0x269
-0xFF reserved, no features
+0x265 0x00 reserved, no features
+0x265 0x01 DAC1 (VCO)
+0x265 0x02 VCO
+0x265 0x04 RTC
+0x265 0x08 ADC/DAC2 (ADS1115/MCP4725)
+0x265 0x10 GPI2 (PCF8574)
+0x265 0x20 Temp sensor (TMP102)
+0x265 0x40 eeprom
+0x265 0x80 ->format2 @ offset 0x266-0x269
+0x265 0xFF reserved, no features
 
 offset 0x266-0x269 part_boardfeatures(16b) format2 mask
 0x266 0x01 cdce813
@@ -5036,7 +5036,6 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
 0x266 0x40
 0x266 0x80
 */
-//      if(part_boardfeatures != 0xff || i2c_probe ) dev_info(&pdev->dev, "NVM board features: 0x%02x\n", part_boardfeatures);
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 

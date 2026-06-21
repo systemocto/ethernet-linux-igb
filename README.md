@@ -25,6 +25,9 @@ This is the modified igb base driver for proprietary hardware "board 2409"
  or (1) the card will fall off the bus (message "PCIe link lost").
 
 
+ note: update initramfs with applicable firmware files.
+
+
 * SyncE or not? 
 
   Although we have a physical layer that is phase-synchronized to GNSS reference, this NIC isn't a true SyncE device.

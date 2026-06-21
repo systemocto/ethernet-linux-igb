@@ -1251,6 +1251,9 @@
 #define NVM_WORD_SIZE_BASE_SHIFT	6
 #define NVM_XTALCALH               0x0130
 #define NVM_XTALCALL               0x0131
+#define NVM_OSCTYPE               0x0132 /* L */
+#define NVM_BOARDFEATURES         0x0132 /* H */
+#define NVM_BOARDFEATURES2        0x0133 /* L */
 
 /* NVM Commands - SPI */
 #define NVM_MAX_RETRY_SPI	5000 /* Max wait of 5ms, for RDY signal */
