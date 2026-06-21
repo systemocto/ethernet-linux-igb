@@ -91,7 +91,7 @@ devkernelbuild = $(call kernelbuild,$(if $(filter -DNO_PTP_SUPPORT,${EXTRA_CFLAG
 # Build rules #
 ###############
 KERNELDIR ?= /lib/modules/$(shell uname -r)/build
-#KERNELDIR ?= /mnt/data/development/buildroot-2019.02.2/output/build/linux-4.19.36
+KERNELDIR ?= /mnt/data/development/buildroot-2019.02.2/output/build/linux-4.19.36
 #KERNELDIR ?= /mnt/md1/buildroot-2024.08.2/buildroot-2024.08.2/output/build/linux-6.10.14
 
 # Standard compilation, with regular output

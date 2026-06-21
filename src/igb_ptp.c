@@ -868,6 +868,7 @@ static int igb_ptp_enable_i210(struct ptp_clock_info *ptp,
         return 0;
 }
 
+/*
 static void igb_pin_direction(int pin, int input, u32 *ctrl, u32 *ctrl_ext)
 {
         u32 *ptr = pin < 2 ? ctrl : ctrl_ext;
@@ -884,7 +885,7 @@ static void igb_pin_direction(int pin, int input, u32 *ctrl, u32 *ctrl_ext)
                 *ptr |= mask[pin];
 }
 
-/*
+
 static void igb_pin_extts(struct igb_adapter *igb, int chan, int pin)
 {
         static const u32 aux0_sel_sdp[IGB_N_SDP] = {

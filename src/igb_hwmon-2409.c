@@ -26,7 +26,7 @@ static ssize_t igb_hwmon_show_location(struct device *dev,
 {
 	struct hwmon_attr *igb_attr = container_of(attr, struct hwmon_attr,
 						     dev_attr);
-        struct igb_adapter *adapter = container_of(igb_attr->hw, struct igb_adapter, hw);
+        //struct igb_adapter *adapter = container_of(igb_attr->hw, struct igb_adapter, hw);
 
 	int i = igb_attr->name[4] - 0x30;
 
@@ -64,7 +64,7 @@ static ssize_t igb_hwmon_show_cautionthresh(struct device *dev,
 {
 	struct hwmon_attr *igb_attr = container_of(attr, struct hwmon_attr,
 						     dev_attr);
-        struct igb_adapter *adapter = container_of(igb_attr->hw, struct igb_adapter, hw);
+        //struct igb_adapter *adapter = container_of(igb_attr->hw, struct igb_adapter, hw);
 
 	unsigned int value = igb_attr->sensor->caution_thresh;
 //	if((res = tmp102_init(adapter->i2c_tmpocxo, lmkocxotemp - 5, lmkocxotemp)) == 0) {
@@ -118,7 +118,7 @@ eec_invalid_value          0
 			value = 1;
 			if((adapter->dpll_flags & DPLL_FLAGS_LOFL_DPLL) == 0) value = 3;
 			if((adapter->dpll_flags & DPLL_FLAGS_LOPL_DPLL) == 0) value = 2;
-			if((adapter->dpll_flags & DPLL_FLAGS_HLDOVR) == 1) value = 4;
+			if( !(adapter->dpll_flags & DPLL_FLAGS_HLDOVR) ) value = 4;
 		}
 	} else if(i == 1) {
 		if(adapter->i2c_tmp) value = tmp102_read(adapter->i2c_tmp);

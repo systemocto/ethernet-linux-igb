@@ -1972,7 +1972,7 @@ static int ds1307_get_time(struct device *dev, struct rtc_time *t)
         ret = i2c_smbus_read_i2c_block_data(client, 0,
                                             sizeof(regs), regs);
         if (ret < 0) {
-                dev_err(dev, "%s error %d\n", "READ", ret);
+//                dev_err(dev, "%s error %d\n", "READ", ret);
                 return ret;
         }
 
@@ -4993,7 +4993,6 @@ static int igb_probe(struct pci_dev *pdev,
 				
         if ((hw->mac.type >= e1000_i210 ||
              e1000_get_flash_presence_i210(hw))) {
-//              ret_val = igb_read_part_xtalcal3(hw, &part_xtalcal, &part_oscillatortype, &part_boardfeatures);
                 ret_val = igb_read_part_xtalcal4(hw, &part_xtalcal, &part_oscillatortype, &part_boardfeatures);
                 if ((part_boardfeatures & 0xff00) == 0xff00) part_boardfeatures &= 0x00ff;
 
@@ -5006,7 +5005,6 @@ static int igb_probe(struct pci_dev *pdev,
                 ret_val = -E1000_ERR_INVM_VALUE_NOT_FOUND;
         }
 
-//        dev_info(&pdev->dev, "NVM xtalcal: freq %s%i ppb, type %s (0x%08x 0x%02x)\n", part_xtalcal>0 ? "+" : "", part_xtalcal,
         dev_info(pci_dev_to_dev(pdev), "NVM xtalcal: freq %s%i ppb, type %s (0x%08x 0x%02x)\n", part_xtalcal>0 ? "+" : "", part_xtalcal,
                 part_oscillatortype == 0 ? "crystal (HC49)" : 
                 part_oscillatortype == 1 ? "tcxo" : 
@@ -5060,7 +5058,6 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                 }
 
                 if( ((part_boardfeatures & 0xff) != 0xff && (part_boardfeatures & 0xff) != 0x00)  )
-//                        dev_info(&pdev->dev, "NVM board features (0x%04x): %s%s%s%s%s%s%s%s",
                         dev_info(pci_dev_to_dev(pdev), "NVM board features (0x%04x): %s%s%s%s%s%s%s%s %s%s%s%s%s",
                         part_boardfeatures,
                         part_boardfeatures & 0x01 ? "DAC1 " : "",
@@ -5089,7 +5086,6 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                 E1000_WRITE_REG(hw, E1000_SYSTIMR, 0); //fraqtional ns
                 E1000_WRITE_REG(hw, E1000_SYSTIML, (u32)rtc_tv_nsec);
                 E1000_WRITE_REG(hw, E1000_SYSTIMH, (u32)rtc_tv_sec);
-//                dev_info(&pdev->dev, "RTC: PHC initialized time=%lld.%lld +%i%s", rtc_tv_sec, rtc_tv_nsec, adapter->rtc_utc_tai, adapter->rtc_utc_tai ? " (UTC/TAI corrected)" : "(UTC)" );
                 dev_info(pci_dev_to_dev(pdev), "RTC: PHC initialized time=%lld.%lld +%i%s", rtc_tv_sec, rtc_tv_nsec, adapter->rtc_utc_tai, adapter->rtc_utc_tai ? " (UTC/TAI corrected)" : "(UTC)" );
         }
 
@@ -5108,11 +5104,9 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                         if(adapter->i2c_pca9557_19) i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, ~0x02);
                 }
 
-//                dev_info(&pdev->dev, "LMK05318 REVID: 0x%02X, PARTID: 0x%08X, EEREV: 0x%02x, build:#%02d\n", lmkregs_old[3], (lmkregs_old[4]<<24 | lmkregs_old[5]<<16 | lmkregs_old[6]<<8 | lmkregs_old[7]), lmkregs_old[11], lmkregs_old[156] );
                 dev_info(pci_dev_to_dev(pdev), "LMK05318 REVID: 0x%02X, PARTID: 0x%08X, EEREV: 0x%02x, build:#%02d\n", lmkregs_old[3], (lmkregs_old[4]<<24 | lmkregs_old[5]<<16 | lmkregs_old[6]<<8 | lmkregs_old[7]), lmkregs_old[11], lmkregs_old[156] );
 
                 snprintf(fwname, sizeof(fwname), "%s-%02d%s", LMK05318_HEXREGVAL_FILE, (unsigned int) adapter->dipsw, ".txt" );
-//                dev_info(&pdev->dev, "Loading Texas Instruments TICS Pro firmware (ID:%02d) %s-%02d%s\n", (unsigned int) adapter->dipsw, LMK05318_HEXREGVAL_FILE, (unsigned int) adapter->dipsw, ".txt" );
                 dev_info(pci_dev_to_dev(pdev), "Loading Texas Instruments TICS Pro firmware (ID:%02d) %s-%02d%s\n", (unsigned int) adapter->dipsw, LMK05318_HEXREGVAL_FILE, (unsigned int) adapter->dipsw, ".txt" );
 
                 err = request_firmware(&firmware, fwname, &pdev->dev);
@@ -5147,10 +5141,6 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
         char pchar;
         int regmax = 0;
 
-        //u16 lmkregi;
-        //u8 lmkregs[512], res;
-//      u8 res, lmkregs_old[512];
-
         if(adapter->i2c_pca9557_19) {
                 i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 3, 0x00 ); // all output
                 i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, ~0x02);
@@ -5170,7 +5160,6 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                         //dev_info(&pdev->dev, "R%d\t0x%06X  strlen=%d reg:%d=%d addrh=0x%02X addrl=0x%02X value=0x%02X\n", regnamenum, reghreglregv, strlen(parse_buffer), regnamenum, reghreglregv>>8, reghreglregv >> 16, reghreglregv>>8 & 0x00ff, reghreglregv & 0x0000ff);
                         // i2c write
                         if(lmkregs_old[regnamenum] != (reghreglregv & 0x0000ff)) {
-//                                dev_info(&pdev->dev, "[LFW] R%d\t0x%06X \tstrlen=%d reg:%d=%d addrh=0x%02X addrl=0x%02X value=0x%02X (old 0x%02X)\n", regnamenum, reghreglregv, strlen(parse_buffer), regnamenum, reghreglregv>>8, reghreglregv >> 16, reghreglregv>>8 & 0x00ff, reghreglregv & 0x0000ff, lmkregs_old[regnamenum]);
                                 dev_info(pci_dev_to_dev(pdev), "[LFW] R%d\t0x%06X \tstrlen=%ld reg:%d=%d addrh=0x%02X addrl=0x%02X value=0x%02X (old 0x%02X)\n", regnamenum, reghreglregv, strlen(parse_buffer), regnamenum, reghreglregv>>8, reghreglregv >> 16, reghreglregv>>8 & 0x00ff, reghreglregv & 0x0000ff, lmkregs_old[regnamenum]);
                                 res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, reghreglregv >> 16, (reghreglregv>>8 & 0x00ff) | ((reghreglregv & 0x0000ff) << 8));
                                 if (res < 0) {err |= 0x80; continue;}
@@ -5232,11 +5221,8 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
 
         }
 
-//HexRegisterValues
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// subsystem_device_id
-// subsystem_vendor_id
 
         adapter->doubleedge = doubleedge;
 
@@ -5300,11 +5286,6 @@ if (adapter->xtalcal) {
 }
 // adjfine end
 
-//	ret_val = e1000_read_pba_string(hw, pba_str, E1000_PBANUM_LENGTH);
-//	if (ret_val)
-//		strcpy(pba_str, "Unknown");
-//	dev_info(pci_dev_to_dev(pdev), "%s: PBA No: %s\n", netdev->name,
-//		 pba_str);
         if ((hw->mac.type >= e1000_i210 ||
              e1000_get_flash_presence_i210(hw))) {
                 ret_val = e1000_read_pba_string(hw, pba_str,
