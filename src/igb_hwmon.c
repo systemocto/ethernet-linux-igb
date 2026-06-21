@@ -183,7 +183,11 @@ int igb_sysfs_init(struct igb_adapter *adapter)
 			goto exit;
 #ifdef HAVE_I2C_SUPPORT
 	/* init i2c_client */
-	client = i2c_new_device(&adapter->i2c_adap, &i350_sensor_info);
+#if LINUX_VERSION_CODE > KERNEL_VERSION(5,8,0)
+        client = i2c_new_client_device(&adapter->i2c_adap, &i350_sensor_info);
+#else
+        client = i2c_new_device(&adapter->i2c_adap, &i350_sensor_info);
+#endif
 	if (client == NULL) {
 		dev_info(&adapter->pdev->dev,
 			"Failed to create new i2c device..\n");
