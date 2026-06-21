@@ -38,13 +38,10 @@
 #include <linux/bcd.h>
 #include <linux/firmware.h>
 #include "tmp102.h"
-//#include <cstdint>
-//#include <stdint.h>
 #undef HAVE_FDB_OPS
 #undef HAVE_NDO_FEATURES_CHECK
 #undef ETHTOOL_SEEE
 
-//#include "kcompat_sigil.h"
 #include "kcompat_generated_defs.h"
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
@@ -53,15 +50,12 @@
 
 
 
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)
-#ifndef eth_hw_addr_set
-static inline void eth_hw_addr_set(struct net_device *dev, const u8 *addr)
+//#if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)
+static inline void eth_hw_addr_set1(struct net_device *dev, const u8 *addr)
 {
     memcpy(dev->dev_addr, addr, ETH_ALEN);
 }
-#endif
-#endif
+//#endif
 
 
 static inline struct i2c_client *i2c_new_client_device1(struct i2c_adapter *adap, struct i2c_board_info const *info)
@@ -74,6 +68,15 @@ static inline struct i2c_client *i2c_new_client_device1(struct i2c_adapter *adap
         return client;
 #else
         return i2c_new_client_device(adap, info);
+#endif
+}
+
+static inline u32 eth_get_headlen1(struct net_device *dev, void *data, u32 len)
+{
+#if LINUX_VERSION_CODE > KERNEL_VERSION(5,15,0)
+	return eth_get_headlen(dev, data, len);
+#else
+	return eth_get_headlen(data, len);
 #endif
 }
 
@@ -142,7 +145,6 @@ static int igb_setup_all_rx_resources(struct igb_adapter *);
 static void igb_free_all_tx_resources(struct igb_adapter *);
 static void igb_free_all_rx_resources(struct igb_adapter *);
 static void igb_setup_mrqc(struct igb_adapter *);
-//static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, intptr_t *len);
 static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len);
 static int igb_probe(struct pci_dev *, const struct pci_device_id *);
 static void igb_remove(struct pci_dev *pdev);
@@ -341,7 +343,7 @@ module_param(ignore_nvm_checksum, bool, 0);
 MODULE_PARM_DESC(ignore_nvm_checksum,
                 "Set to ignore nvm checksum validation (defaults N)");
 
-//octo
+
 static int xtalcal = 0;
 module_param(xtalcal, int, S_IRUSR | S_IWUSR);
 MODULE_PARM_DESC(xtalcal, "PHC crystal calibration in PPB @ 25C (default read from NVM)");
@@ -2325,7 +2327,7 @@ static struct i2c_board_info eeprom2_info = {
 static s32 igb_init_i2c(struct igb_adapter *adapter)
 {
 	s32 status = E1000_SUCCESS;
-//        struct i2c_client *client, *client2;
+//        struct i2c_client *client;
         struct i2c_client *i2c_dipsw; // 0x20 or 0x18
         struct i2c_client *i2c_gpi2; // 0x21
         struct i2c_client *i2c_pca9557_19; // 0x19
@@ -2372,7 +2374,6 @@ static s32 igb_init_i2c(struct igb_adapter *adapter)
         mutex_init(&adapter->lmk_mutex);
 
         if (adapter->hw.mac.type == e1000_i210 || adapter->hw.mac.type == e1000_i211) {
-//      if (adapter->hw.mac.type == e1000_i210 ) {
                 adapter->i2c_adap2.owner = THIS_MODULE;
                 adapter->i2c_algo2 = igb_i2c_algo2;
                 adapter->i2c_algo2.udelay = i2c_delay == 0 ? 15 : i2c_delay;
@@ -2384,7 +2385,6 @@ static s32 igb_init_i2c(struct igb_adapter *adapter)
 if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
 
 
-//                strlcpy(adapter->i2c_adap2.name, "igb SDP",
                 strscpy(adapter->i2c_adap2.name, "igb SDP",
                         sizeof(adapter->i2c_adap2.name));
 
@@ -2539,8 +2539,6 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
                         adapter->i2c_dac1 = 0;
                 } else {
                         adapter->i2c_dac1 = i2c_dac1;
-                        //adapter->dac1val = dacval;
-                        //mcp4725_set_value(adapter );
                 }
         }
 
@@ -2555,8 +2553,6 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
                         adapter->i2c_dac2 = 0;
                 } else {
                         adapter->i2c_dac2 = i2c_dac2;
-                        adapter->dac2val = 2048;//dac2val;
-                        mcp4725_set_value(adapter );
                 }
         }
 
@@ -2744,7 +2740,7 @@ geen_rtc:
         return status;
 }
 
-//////////// leds
+// leds
 static void igb_select_led(struct igb_adapter *adapter, int led,
                            u32 *mask, u32 *shift)
 {
@@ -2951,8 +2947,7 @@ static void igb_led_destroy(struct igb_adapter *adapter)
         if( ! (i2c_leds & 0x08)) mutex_destroy(&adapter->led_mutex);
 }
 
-                                                                                                                
-///////////////////////////// leds2
+// leds2
 
 static void igb_select_led2(struct igb_adapter *adapter, int led,
                            u32 *mask, u32 *shift)
@@ -3261,8 +3256,8 @@ static void igb_led_destroy2(struct igb_adapter *adapter)
 
         if( ! (i2c_leds & 0x08)) mutex_destroy(&adapter->led_mutex2);
 }
-///////////////////////////// leds2 end
-//////////// leds end
+// leds2 end
+// leds end
                                                                                                                                                                         
 
 s32 igb_validate_nvm_checksum_octo(struct pci_dev *pdev, struct e1000_hw *hw)
@@ -4792,7 +4787,7 @@ static int igb_probe(struct pci_dev *pdev,
 	/* copy the MAC address out of the NVM */
 	if (e1000_read_mac_addr(hw))
 		dev_err(pci_dev_to_dev(pdev), "NVM Read Error\n");
-	eth_hw_addr_set(netdev, hw->mac.addr);
+	eth_hw_addr_set1(netdev, hw->mac.addr);
 #ifdef ETHTOOL_GPERMADDR
 	memcpy(netdev->perm_addr, hw->mac.addr, netdev->addr_len);
 
@@ -6645,7 +6640,7 @@ static int igb_set_mac(struct net_device *netdev, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(netdev, addr->sa_data);
+	eth_hw_addr_set1(netdev, addr->sa_data);
 	memcpy(hw->mac.addr, addr->sa_data, netdev->addr_len);
 
 	/* set the correct pool for the new PF MAC address in entry 0 */
@@ -10499,11 +10494,13 @@ static bool igb_add_rx_frag(struct igb_ring *rx_ring,
 	 * 60 bytes if the skb->len is less than 60 for skb_pad.
 	 */
 //octo
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5,15,0)
-	pull_len = eth_get_headlen(skb->dev, va, IGB_RX_HDR_LEN);
-#else
-	pull_len = eth_get_headlen(va, IGB_RX_HDR_LEN);
-#endif
+	pull_len = eth_get_headlen1(skb->dev, va, IGB_RX_HDR_LEN);
+
+//#if LINUX_VERSION_CODE > KERNEL_VERSION(5,15,0)
+//	pull_len = eth_get_headlen(skb->dev, va, IGB_RX_HDR_LEN);
+//#else
+//	pull_len = eth_get_headlen(va, IGB_RX_HDR_LEN);
+//#endif
 	/* align pull length to size of long to optimize memcpy performance */
 	memcpy(__skb_put(skb, pull_len), va, ALIGN(pull_len, sizeof(long)));
 
