@@ -25,7 +25,9 @@ This is the modified igb base driver for proprietary hardware "board 2409"
  or (1) the card will fall off the bus (message "PCIe link lost").
 
 
- note: update initramfs with applicable firmware files.
+ note: update initramfs with applicable firmware files and set module parameter lmkfw=1.
+   
+   echo "options igb lmkfw=1" > /etc/modprobe.d/igb.conf
 
 
 * SyncE or not? 
