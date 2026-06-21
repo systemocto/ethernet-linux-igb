@@ -53,7 +53,7 @@
 
 
 
-/*
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)
 #ifndef eth_hw_addr_set
 static inline void eth_hw_addr_set(struct net_device *dev, const u8 *addr)
@@ -62,7 +62,7 @@ static inline void eth_hw_addr_set(struct net_device *dev, const u8 *addr)
 }
 #endif
 #endif
-*/
+
 
 static inline struct i2c_client *i2c_new_client_device1(struct i2c_adapter *adap, struct i2c_board_info const *info)
 {
@@ -10499,11 +10499,11 @@ static bool igb_add_rx_frag(struct igb_ring *rx_ring,
 	 * 60 bytes if the skb->len is less than 60 for skb_pad.
 	 */
 //octo
-//#if LINUX_VERSION_CODE > KERNEL_VERSION(5,15,0)
+#if LINUX_VERSION_CODE > KERNEL_VERSION(5,15,0)
 	pull_len = eth_get_headlen(skb->dev, va, IGB_RX_HDR_LEN);
-//#else
-//	pull_len = eth_get_headlen(va, IGB_RX_HDR_LEN);
-//#endif
+#else
+	pull_len = eth_get_headlen(va, IGB_RX_HDR_LEN);
+#endif
 	/* align pull length to size of long to optimize memcpy performance */
 	memcpy(__skb_put(skb, pull_len), va, ALIGN(pull_len, sizeof(long)));
 
