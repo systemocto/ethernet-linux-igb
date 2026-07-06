@@ -24,6 +24,16 @@ This is the modified igb base driver for proprietary hardware "board 2409"
  note: after firmware loading or manual DPLL reset there will be (2) a brief link down/up
  or (1) the card will fall off the bus (message "PCIe link lost").
 
+  - SW2/JP6: reference select
+     - PRI/1-2: primary reference GNSS
+     - SEC/2-3: secondary reference J12 U.fl connector and SDP1
+ note: do not connect both SW2 and JP6 to prevent a short circuit
+
+
+
+
+
+
 
  note: update initramfs with applicable firmware files and set module parameter lmkfw=1.
    
