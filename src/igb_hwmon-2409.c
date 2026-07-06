@@ -26,12 +26,17 @@ static ssize_t igb_hwmon_show_location(struct device *dev,
 {
 	struct hwmon_attr *igb_attr = container_of(attr, struct hwmon_attr,
 						     dev_attr);
-        //struct igb_adapter *adapter = container_of(igb_attr->hw, struct igb_adapter, hw);
+        struct igb_adapter *adapter = container_of(igb_attr->hw, struct igb_adapter, hw);
 
 	int i = igb_attr->name[4] - 0x30;
 
-	return sprintf(buf, "loc%u\n",
-		       i);
+	if(i == 0) {
+		if(adapter->i2c_tmpocxo) return sprintf(buf, "ocxo (ID:%i)\n", adapter->dipsw);
+	} else if(i == 1) {
+		if(adapter->i2c_tmp) return sprintf(buf, "board sensor %i\n", i);
+	}
+
+	return -EPERM;
 }
 
 static ssize_t igb_hwmon_show_temp(struct device *dev,
@@ -118,7 +123,7 @@ eec_invalid_value          0
 			value = 1;
 			if((adapter->dpll_flags & DPLL_FLAGS_LOFL_DPLL) == 0) value = 3;
 			if((adapter->dpll_flags & DPLL_FLAGS_LOPL_DPLL) == 0) value = 2;
-			if( !(adapter->dpll_flags & DPLL_FLAGS_HLDOVR) ) value = 4;
+			if((adapter->dpll_flags & DPLL_FLAGS_HLDOVR) ) value = 4;
 		}
 	} else if(i == 1) {
 		if(adapter->i2c_tmp) value = tmp102_read(adapter->i2c_tmp);
@@ -142,6 +147,18 @@ static int igb_add_hwmon_attr(struct igb_adapter *adapter,
 	int rc;
 	unsigned int n_attr;
 	struct hwmon_attr *igb_attr;
+
+	switch (offset) {
+	case 0:
+		if(adapter->i2c_tmpocxo) break;
+		return 0;
+	case 1:
+		if(adapter->i2c_tmp) break;
+		return 0;
+	default:
+		rc = -EPERM;
+		return rc;
+	}
 
 	n_attr = adapter->igb_hwmon_buff2.n_hwmon;
 	igb_attr = &adapter->igb_hwmon_buff2.hwmon_list[n_attr];

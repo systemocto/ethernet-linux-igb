@@ -5101,7 +5101,7 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                 dev_info(pci_dev_to_dev(pdev), "LMK05318 REVID: 0x%02X, PARTID: 0x%08X, EEREV: 0x%02x, build:#%02d\n", lmkregs_old[3], (lmkregs_old[4]<<24 | lmkregs_old[5]<<16 | lmkregs_old[6]<<8 | lmkregs_old[7]), lmkregs_old[11], lmkregs_old[156] );
 
                 snprintf(fwname, sizeof(fwname), "%s-%02d%s", LMK05318_HEXREGVAL_FILE, (unsigned int) adapter->dipsw, ".txt" );
-                dev_info(pci_dev_to_dev(pdev), "Loading Texas Instruments TICS Pro firmware (ID:%02d) %s-%02d%s\n", (unsigned int) adapter->dipsw, LMK05318_HEXREGVAL_FILE, (unsigned int) adapter->dipsw, ".txt" );
+                dev_info(pci_dev_to_dev(pdev), "Loading Texas Instruments TICS Pro firmware (ID:%02d) %s-%02d%s (diff)\n", (unsigned int) adapter->dipsw, LMK05318_HEXREGVAL_FILE, (unsigned int) adapter->dipsw, ".txt" );
 
                 err = request_firmware(&firmware, fwname, &pdev->dev);
                 if (err) {

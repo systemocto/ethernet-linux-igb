@@ -743,8 +743,8 @@ struct igb_adapter {
         struct i2c_client *i2c_tmpocxo;
 
 
-        int dipsw;
-        int sn;
+        int dipsw;			// dipswitch ID
+        int sn;				// serial number
         int rtc_utc_tai;
 	u16 dac1val;
 	u16 dac2val;
