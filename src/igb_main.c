@@ -2603,7 +2603,7 @@ geen_eeprom:
 
         if(i2c_smbus_read_byte_data(i2c_dipsw, 0) >= 0) {
                 int dipsw_l = -1;
-                if(adapter->i2c_eeprom) dipsw_l = i2c_smbus_read_byte_data(adapter->i2c_eeprom, 4);
+                if(adapter->i2c_eeprom) dipsw_l = i2c_smbus_read_byte_data(adapter->i2c_eeprom, 4); //EE_ID
 
                 // PCF8574 @ 0x20
                 if(adapter->i2c_dipsw->addr == 0x20) {
@@ -3322,17 +3322,17 @@ EE_LMKREG_BASE+2 + (len * 3)    0x6f "o"        // end
 //   eeprom map_lmkregD12_D19 ledD12-D19 lmkreg mapping {lmkregh, lmkregl, regmask}
 */
 // read LMK register config from eeprom
-//static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, u8 *len)
-//static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, intptr_t *len)
 static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len)
 {
-#define EE_SN_BASE 0x00 //32 bits 0x00-0x03
+#define EE_SN_BASE 0x00 //32 bits 0x00..0x03
 #define EE_ID 0x04 // dipswitch ID
-#define EE_LEDMAP_BASE 0x07
-#define EE_LMKREG_BASE 0x10
-#define EE_DAC1_BASE 0x74 // 0x74-0x77
-#define EE_CDCEREG_BASE 0xa0
-   //struct i2c_client *i2c_eeprom = adapter->i2c_eeprom;
+#define EE_TAI 0x05 // TAI offset
+#define EE_TEMPT 0x06 // OCXO temp threshold
+#define EE_LEDMAP_BASE 0x07 // 0x00..0x0F
+#define EE_LMKREG_BASE 0x10 // max len 32 *3 +2 = 0x10..0x72
+#define EE_DAC1_BASE 0x74 // 0x74..0x77
+#define EE_PHYXOPPB 0x78 // int xtalcal ppb's 0x78..0x79
+#define EE_CDCEREG_BASE 0xa0 //max len 31 *2 +2 = 0xa0..0xE0
    int res=-1;
    int i = 0;
    int err = 0;
@@ -3364,20 +3364,16 @@ static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len)
 //        return -1;
                 dev_info(&adapter->pdev->dev, "%s (%d): abborting, cdce: %i\n", __FUNCTION__,__LINE__, res);
    } else {
-//        len = (u8) i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_CDCEREG_BASE + 1 );//len = 1 for one cdcereg <regh,regl,val>
         len = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_CDCEREG_BASE + 1 );//len = 1 for one cdcereg <regh,regl,val>
         if( len > 31) {
                 dev_info(&adapter->pdev->dev, "%s (%d): abborting, invalid len (>31): %i\n", __FUNCTION__,__LINE__, len);
                 return -2;
         }
-//        res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_CDCEREG_BASE + ((u8)len * 2 +2) );
         res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_CDCEREG_BASE + (len * 2 +2) );
         if( res != 0x6f /* o */) return -5;
-//        else dev_info(&adapter->pdev->dev, "%s (%d): Found CDCE block @ 0x%04x-0x%04x\n", __FUNCTION__,__LINE__, EE_CDCEREG_BASE, EE_CDCEREG_BASE + ((u8)len * 2 +2));
         else dev_info(&adapter->pdev->dev, "%s (%d): Found CDCE block @ 0x%04x-0x%04x\n", __FUNCTION__,__LINE__, EE_CDCEREG_BASE, EE_CDCEREG_BASE + (len * 2 +2));
 
 
-//        for( i=0+2; i<((u8)len * 2 +2) ; i+=2 ) {
         for( i=0+2; i<(len * 2 +2) ; i+=2 ) {
                 data[i+0] = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_CDCEREG_BASE + i+0); //Register LSB
                 data[i+1] = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_CDCEREG_BASE + i+1); //Register value
@@ -3394,11 +3390,8 @@ static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len)
 			reg_last = reg;
 
 
-//#define CDCE925_I2C_COMMAND_BLOCK_TRANSFER      0x00
 #define CDCE925_I2C_COMMAND_BYTE_TRANSFER       0x80
         /* First byte is command code */
-//      reg_data[0] = CDCE925_I2C_COMMAND_BYTE_TRANSFER | ((u8 *)data)[0];
-//      reg_data[1] = ((u8 *)data)[1];
         reg_data[0] = CDCE925_I2C_COMMAND_BYTE_TRANSFER | data[i+0];
         reg_data[1] = data[i+1];
 
@@ -3407,11 +3400,9 @@ static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len)
                 res = 0;
                 if (res < 0) { err++; continue; }
         }
-//        if( (((u8) len )/2 == i/2) || (!err))
         if( (len/2 == i/2) || (!err))
                 dev_info(&adapter->pdev->dev, "%s (%d): loaded %i register%s\n", __FUNCTION__,__LINE__, i/2, i/2 > 1 ? "s" : "");
         else
-//                dev_info(&adapter->pdev->dev, "%s (%d): error loading %i registers, counted %i, bus errors %i\n", __FUNCTION__,__LINE__, ((u8) len )/2, i/2, err);
                 dev_info(&adapter->pdev->dev, "%s (%d): error loading %i registers, counted %i, bus errors %i\n", __FUNCTION__,__LINE__,  len /2, i/2, err);
    }
 
@@ -3424,20 +3415,16 @@ static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len)
 //        return -1;
    } else {
         len = (u8) i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LMKREG_BASE + 1 );//len = 1 for one lmkreg <regh,regl,val>
-        if(len > 33) {
-                dev_info(&adapter->pdev->dev, "%s (%d): abborting, invalid len (>33): %i\n", __FUNCTION__,__LINE__, len);
+        if(len > 32) {
+                dev_info(&adapter->pdev->dev, "%s (%d): abborting, invalid len (>32): %i\n", __FUNCTION__,__LINE__, len);
                 return -6;
         }
 
-//        res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LMKREG_BASE + ((u8)len * 3 +2) );
         res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LMKREG_BASE + (len * 3 +2) );
         if( res != 0x6f /* o */) return -7;
-//        else dev_info(&adapter->pdev->dev, "%s (%d): Found LMK block @ 0x%04x-0x%04x\n", __FUNCTION__,__LINE__, EE_LMKREG_BASE, EE_LMKREG_BASE + ((u8)len * 3 +2));
         else dev_info(&adapter->pdev->dev, "%s (%d): Found LMK block @ 0x%04x-0x%04x\n", __FUNCTION__,__LINE__, EE_LMKREG_BASE, EE_LMKREG_BASE + ( len * 3 +2) );
-//              dev_info(&adapter->pdev->dev, "%s (%d): Found LMK block trailer @ 0x%04x\n", __FUNCTION__,__LINE__, EE_LMKREG_BASE + ((u8)len * 3 +2));
 
 
-//        for( i=0+2; i<((u8)len * 3 +2) ; i+=3 ) {
         for( i=0+2; i<(len * 3 +2) ; i+=3 ) {
                 data[i+0] = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LMKREG_BASE + i+0); //Register MSB
                 data[i+1] = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_LMKREG_BASE + i+1); //Register LSB
@@ -3460,11 +3447,9 @@ static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len)
 
         }
 
-//        if( (((u8) len )/3 == i/3) || (!err))
         if( (len /3 == i/3) || (!err))
                 dev_info(&adapter->pdev->dev, "%s (%d): loaded %i register%s\n", __FUNCTION__,__LINE__, i/3, i/3 > 1 ? "s" : "");
         else
-//                dev_info(&adapter->pdev->dev, "%s (%d): error loading %i registers, counted %i, bus errors %i\n", __FUNCTION__,__LINE__, ((u8) len )/3, i/3, err);
                 dev_info(&adapter->pdev->dev, "%s (%d): error loading %i registers, counted %i, bus errors %i\n", __FUNCTION__,__LINE__, len/3, i/3, err);
 
 //        res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x00, (0x0C) | (0x9B << 8));
@@ -3494,6 +3479,21 @@ static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len)
                         mcp4725_set_value(adapter );
                 }
         }//dac1
+
+
+// Phy xtal offset ppb's
+        res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_PHYXOPPB);
+
+        if( res != 0xff ) {
+                int phyxoppb;
+                phyxoppb = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_PHYXOPPB );
+                phyxoppb += i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_PHYXOPPB + 1 ) << 8;
+                if(phyxoppb < -100000 || phyxoppb > 100000) {
+                        dev_info(&adapter->pdev->dev, "%s (%d): Phy xtal offset value out of range (%d)\n", __FUNCTION__,__LINE__, phyxoppb);
+                } else {
+                        dev_info(&adapter->pdev->dev, "%s (%d): Phy xtal offset value: %d ppb\n", __FUNCTION__,__LINE__, phyxoppb);
+                }
+        }// Phy xtal offset ppb's
 
 
 
@@ -5073,7 +5073,7 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
         }
 
         if( adapter->i2c_rtc && (part_boardfeatures & 0x04) && rtc_tv_sec) {
-                if(adapter->i2c_eeprom) adapter->rtc_utc_tai = i2c_smbus_read_byte_data(adapter->i2c_eeprom, 5);
+                if(adapter->i2c_eeprom) adapter->rtc_utc_tai = i2c_smbus_read_byte_data(adapter->i2c_eeprom, 5); //EE_TAI
                 if(adapter->rtc_utc_tai > 0 && adapter->rtc_utc_tai < 50) rtc_tv_sec += adapter->rtc_utc_tai;
                 else adapter->rtc_utc_tai = 0;
 
@@ -5208,7 +5208,6 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                 if( (part_boardfeatures & 0x40) && adapter->i2c_eeprom && lmkreg != 2) {
                         u32 eebuf[256];
                         int len;
-//                        int res = read_eeprom_lmk(adapter, eebuf, &len);
                         int res = read_eeprom_lmk(adapter, eebuf, len);
                         dev_info(pci_dev_to_dev(pdev), "%s (%d): eeprom fwload res: %i\n", __FUNCTION__,__LINE__, res);
                 }
@@ -7415,7 +7414,7 @@ static void igb_dpll_task(struct work_struct *work)
         netdev_err(adapter->netdev, "DPLL worker start\n");
 
         if(adapter->i2c_tmpocxo) {
-                if(adapter->i2c_eeprom) lmkocxotemp_ee = i2c_smbus_read_byte_data(adapter->i2c_eeprom, 6);
+                if(adapter->i2c_eeprom) lmkocxotemp_ee = i2c_smbus_read_byte_data(adapter->i2c_eeprom, 6); //EE_TEMPT
                 if(lmkocxotemp_ee != 00 && lmkocxotemp_ee != 0xff) lmkocxotemp = lmkocxotemp_ee;
 
                 if((res = tmp102_init(adapter->i2c_tmpocxo, lmkocxotemp - 5, lmkocxotemp)) == 0) {
@@ -9131,7 +9130,8 @@ static irqreturn_t igb_msix_other(int irq, void *data)
 
 		if (tsicr & E1000_TSICR_TXTS) {
 			/* acknowledge the interrupt */
-			E1000_WRITE_REG(hw, E1000_TSICR, E1000_TSICR_TXTS);
+//			E1000_WRITE_REG(hw, E1000_TSICR, E1000_TSICR_TXTS);
+			tsicr |= E1000_TSICR_TXTS;
 			/* retrieve hardware timestamp */
 			igb_ptp_tx_work(&adapter->ptp_tx_work);
 		}
@@ -9962,7 +9962,8 @@ static irqreturn_t igb_intr_msi(int irq, void *data)
 
 		if (tsicr & E1000_TSICR_TXTS) {
 			/* acknowledge the interrupt */
-			E1000_WRITE_REG(hw, E1000_TSICR, E1000_TSICR_TXTS);
+//			E1000_WRITE_REG(hw, E1000_TSICR, E1000_TSICR_TXTS);
+			tsicr |= E1000_TSICR_TXTS;
 			/* retrieve hardware timestamp */
 			igb_ptp_tx_work(&adapter->ptp_tx_work);
 		}
@@ -10052,7 +10053,8 @@ static irqreturn_t igb_intr(int irq, void *data)
 
 		if (tsicr & E1000_TSICR_TXTS) {
 			/* acknowledge the interrupt */
-			E1000_WRITE_REG(hw, E1000_TSICR, E1000_TSICR_TXTS);
+//			E1000_WRITE_REG(hw, E1000_TSICR, E1000_TSICR_TXTS);
+			tsicr |= E1000_TSICR_TXTS;
 			/* retrieve hardware timestamp */
 			igb_ptp_tx_work(&adapter->ptp_tx_work);
 		}
