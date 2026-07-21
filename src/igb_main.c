@@ -9025,6 +9025,10 @@ static void igb_tsync_interrupt(struct igb_adapter *adapter)
         struct e1000_hw *hw = &adapter->hw;
         struct ptp_clock_event event;
         struct timespec64 ts;
+	static const u32 igb_sdp_val[IGB_N_SDP] = {
+		E1000_TS_SDP0_DATA, E1000_TS_SDP1_DATA, E1000_CTRL_EXT_SDP2_DATA, E1000_CTRL_EXT_SDP3_DATA,
+	};
+
         u32 ack = 0, tsauxc, sec, nsec, tsicr = E1000_READ_REG(hw, E1000_TSICR);
 
         if (tsicr & TSINTR_SYS_WRAP) {

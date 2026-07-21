@@ -583,15 +583,26 @@ void igb_ptp_extts0_work_i210(struct work_struct *work)
         /* prepare external stamp event */
         event.timestamp = E1000_READ_REG(hw, E1000_AUXSTMPL0);
         event.timestamp += E1000_READ_REG(hw, E1000_AUXSTMPH0) * NSEC_PER_SEC;
+	int skip;
 
+	skip = 0;
         // skip falling edge
-        if(!adapter->doubleedge && !(regval & E1000_TS_SDP0_DATA)) {
-                return;
-        }
+//        if(!adapter->doubleedge && !(regval & E1000_TS_SDP0_DATA)) {
+//                return;
+//        }
+
+	//rising edge
+        if ( (adapter->ts0_flags & PTP_RISING_EDGE) && !(adapter->ts0_flags & PTP_FALLING_EDGE) && !(regval & E1000_TS_SDP0_DATA) )
+		skip = 1;
+
+	//falling edge
+        if ( (adapter->ts0_flags & PTP_FALLING_EDGE) && !(adapter->ts0_flags & PTP_RISING_EDGE) && (regval & E1000_TS_SDP0_DATA) )
+		skip = 1;
+
         event.type = PTP_CLOCK_EXTTS;
         event.index = 0;
         /* fire event */
-        ptp_clock_event(adapter->ptp_clock, &event);
+        if(!skip) ptp_clock_event(adapter->ptp_clock, &event);
 }
 
 void igb_ptp_extts1_work_i210(struct work_struct *work)
@@ -603,16 +614,28 @@ void igb_ptp_extts1_work_i210(struct work_struct *work)
         /* prepare external stamp event */
         event.timestamp = E1000_READ_REG(hw, E1000_AUXSTMPL1);
         event.timestamp += E1000_READ_REG(hw, E1000_AUXSTMPH1) * NSEC_PER_SEC;
+	int skip;
 
+	skip = 0;
         // skip falling edge
-//      if(!(regval & E1000_TS_SDP3_DATA)) {
-        if(!adapter->doubleedge && !(regval & E1000_TS_SDP1_DATA)) {
-                return;
-        }
+//        if(!adapter->doubleedge && !(regval & E1000_TS_SDP1_DATA)) {
+//                return;
+//        }
+
+	//rising edge
+        if ( (adapter->ts0_flags & PTP_RISING_EDGE) && !(adapter->ts0_flags & PTP_FALLING_EDGE) && !(regval & E1000_TS_SDP1_DATA) )
+		skip = 1;
+
+
+	//falling edge
+        if ( (adapter->ts0_flags & PTP_FALLING_EDGE) && !(adapter->ts0_flags & PTP_RISING_EDGE) && (regval & E1000_TS_SDP1_DATA) )
+		skip = 1;
+
+
         event.type = PTP_CLOCK_EXTTS;
         event.index = 1;
         /* fire event */
-        ptp_clock_event(adapter->ptp_clock, &event);
+        if(!skip) ptp_clock_event(adapter->ptp_clock, &event);
 }
 
 /**
@@ -643,6 +666,8 @@ static void igb_ptp_switch_extts(struct ptp_clock_info *ptp,
         u32 regval;
         switch(rq->extts.index) {
         case 0:
+		adapter->ts0_flags = rq->extts.flags;
+
                 if(rq->extts.flags & PTP_ENABLE_FEATURE) {
                         // 1
                         regval = E1000_READ_REG(hw, E1000_TSSDP);
@@ -681,6 +706,8 @@ static void igb_ptp_switch_extts(struct ptp_clock_info *ptp,
                 }
                 break;
         case 1:
+		adapter->ts1_flags = rq->extts.flags;
+
                 if(rq->extts.flags & PTP_ENABLE_FEATURE) {
                         // 1
                         regval = E1000_READ_REG(hw, E1000_TSSDP);
@@ -739,7 +766,19 @@ static int igb_ptp_enable_i210(struct ptp_clock_info *ptp,
                 case PTP_CLK_REQ_EXTTS:
                         igb_ptp_switch_extts(ptp, rq, on);
 
-                        printk("%s (%d) Timestamping on channel %d %s %s\n",__FUNCTION__,__LINE__, rq->extts.index, adapter->netdev->name,(rq->extts.flags&PTP_ENABLE_FEATURE)?"enabled":"disabled");
+ 		if ((rq->extts.flags & PTP_STRICT_FLAGS) &&
+ 		    (rq->extts.flags & PTP_ENABLE_FEATURE) &&
+ 		    (rq->extts.flags & PTP_EXTTS_EDGES) != PTP_EXTTS_EDGES)
+ 			return -EOPNOTSUPP;
+
+                        printk("%s (%d) Timestamping on channel %d %s: %s, edge:%s%s\n",__FUNCTION__,__LINE__, rq->extts.index, adapter->netdev->name,
+				(rq->extts.flags & PTP_ENABLE_FEATURE) ? "enabled":"disabled",
+				(rq->extts.flags & PTP_RISING_EDGE) ? "R":"",
+				(rq->extts.flags & PTP_FALLING_EDGE) ? "F":""
+			);
+
+
+
                 break;
                 case PTP_CLK_REQ_PEROUT:
 

@@ -703,6 +703,11 @@ struct igb_adapter {
                 struct timespec64 period;
         } perout[IGB_N_PEROUT];
 
+	unsigned int ts0_pin;
+	unsigned int ts0_flags;
+	unsigned int ts1_pin;
+	unsigned int ts1_flags;
+
 #ifdef HAVE_PTP_1588_CLOCK
 	struct ptp_clock *ptp_clock;
 	struct ptp_clock_info ptp_caps;

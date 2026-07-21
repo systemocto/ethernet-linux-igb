@@ -155,10 +155,11 @@
 /* Extended Device Control */
 #define E1000_CTRL_SDP0_DIR 0x00400000  /* SDP0 Data direction */
 #define E1000_CTRL_SDP1_DIR 0x00800000  /* SDP1 Data direction */
-#define E1000_CTRL_EXT_SDP2_DATA 0x00000040 /* Value of SW Defineable Pin 2 */
-#define E1000_CTRL_EXT_SDP3_DATA 0x00000080 /* Value of SW Defineable Pin 3 */
+#define E1000_CTRL_EXT_SDP2_DATA 0x00000040 /* Value of SW Defineable Pin 2 (IGC_CTRL_EXT_SDP2_VAL)*/
+#define E1000_CTRL_EXT_SDP3_DATA 0x00000080 /* Value of SW Defineable Pin 3 (IGC_CTRL_EXT_SDP3_VAL)*/
 #define E1000_CTRL_EXT_SDP2_DIR  0x00000400 /* SDP2 Data direction */
 #define E1000_CTRL_EXT_SDP3_DIR  0x00000800 /* SDP3 Data direction */
+
 
 #define E1000_CTRL_EXT_LPCD		0x00000004 /* LCD Power Cycle Done */
 #define E1000_CTRL_EXT_DPG_EN		0x00000008 /* Dynamic Power Gating Enable */
@@ -359,9 +360,9 @@
 #define E1000_CTRL_SPD_1000	0x00000200  /* Force 1Gb */
 #define E1000_CTRL_FRCSPD	0x00000800  /* Force Speed */
 #define E1000_CTRL_FRCDPX	0x00001000  /* Force Duplex */
-#define E1000_CTRL_SWDPIN0	0x00040000 /* SWDPIN 0 value */
-#define E1000_CTRL_SWDPIN1	0x00080000 /* SWDPIN 1 value */
-#define E1000_CTRL_SWDPIN2	0x00100000 /* SWDPIN 2 value */
+#define E1000_CTRL_SWDPIN0	0x00040000 /* SWDPIN 0 value SDP0 */
+#define E1000_CTRL_SWDPIN1	0x00080000 /* SWDPIN 1 value SDP1 */
+#define E1000_CTRL_SWDPIN2	0x00100000 /* SWDPIN 2 value SDP2 */
 #define E1000_CTRL_ADVD3WUC	0x00100000 /* D3 WUC */
 #define E1000_CTRL_SWDPIN3	0x00200000 /* SWDPIN 3 value */
 #define E1000_CTRL_SWDPIO0	0x00400000 /* SWDPIN 0 Input or output */
@@ -372,6 +373,10 @@
 #define E1000_CTRL_VME		0x40000000 /* IEEE VLAN mode enable */
 #define E1000_CTRL_PHY_RST	0x80000000 /* PHY Reset */
 #define E1000_CTRL_I2C_ENA	0x02000000 /* I2C enable */
+
+#define E1000_CTRL_SDP0_VAL	0x00040000 /* SDP0 Data value */
+#define E1000_CTRL_SDP1_VAL	0x00080000 /* SDP0 Data value */
+
 
 #define E1000_CONNSW_AUTOSENSE_EN	0x1
 #define E1000_CONNSW_ENRGSRC		0x4
