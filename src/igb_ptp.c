@@ -591,6 +591,7 @@ void igb_ptp_extts0_work_i210(struct work_struct *work)
 //                return;
 //        }
 
+	udelay(5);
 	//rising edge
         if ( (adapter->ts0_flags & PTP_RISING_EDGE) && !(adapter->ts0_flags & PTP_FALLING_EDGE) && !(regval & E1000_TS_SDP0_DATA) )
 		skip = 1;
@@ -622,10 +623,10 @@ void igb_ptp_extts1_work_i210(struct work_struct *work)
 //                return;
 //        }
 
+	udelay(5);
 	//rising edge
         if ( (adapter->ts0_flags & PTP_RISING_EDGE) && !(adapter->ts0_flags & PTP_FALLING_EDGE) && !(regval & E1000_TS_SDP1_DATA) )
 		skip = 1;
-
 
 	//falling edge
         if ( (adapter->ts0_flags & PTP_FALLING_EDGE) && !(adapter->ts0_flags & PTP_RISING_EDGE) && (regval & E1000_TS_SDP1_DATA) )
@@ -766,10 +767,10 @@ static int igb_ptp_enable_i210(struct ptp_clock_info *ptp,
                 case PTP_CLK_REQ_EXTTS:
                         igb_ptp_switch_extts(ptp, rq, on);
 
- 		if ((rq->extts.flags & PTP_STRICT_FLAGS) &&
- 		    (rq->extts.flags & PTP_ENABLE_FEATURE) &&
- 		    (rq->extts.flags & PTP_EXTTS_EDGES) != PTP_EXTTS_EDGES)
- 			return -EOPNOTSUPP;
+ 			if ((rq->extts.flags & PTP_STRICT_FLAGS) &&
+				(rq->extts.flags & PTP_ENABLE_FEATURE) &&
+				(rq->extts.flags & PTP_EXTTS_EDGES) != PTP_EXTTS_EDGES)
+				return -EOPNOTSUPP;
 
                         printk("%s (%d) Timestamping on channel %d %s: %s, edge:%s%s\n",__FUNCTION__,__LINE__, rq->extts.index, adapter->netdev->name,
 				(rq->extts.flags & PTP_ENABLE_FEATURE) ? "enabled":"disabled",

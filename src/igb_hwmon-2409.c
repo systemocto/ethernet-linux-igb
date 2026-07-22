@@ -33,7 +33,7 @@ static ssize_t igb_hwmon_show_location(struct device *dev,
 	if(i == 0) {
 		if(adapter->i2c_tmpocxo) return sprintf(buf, "ocxo (ID:%i)\n", adapter->dipsw);
 	} else if(i == 1) {
-		if(adapter->i2c_tmp) return sprintf(buf, "board sensor %i\n", i);
+		if(adapter->i2c_tmp) return sprintf(buf, "board (ID:%i)\n", i);
 	}
 
 	return -EPERM;
