@@ -146,6 +146,7 @@ static void igb_free_all_tx_resources(struct igb_adapter *);
 static void igb_free_all_rx_resources(struct igb_adapter *);
 static void igb_setup_mrqc(struct igb_adapter *);
 static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len);
+static int read_lmk(struct i2c_client *client, u16 reg);
 static int igb_probe(struct pci_dev *, const struct pci_device_id *);
 static void igb_remove(struct pci_dev *pdev);
 static int igb_sw_init(struct igb_adapter *);
@@ -2371,7 +2372,7 @@ static s32 igb_init_i2c(struct igb_adapter *adapter)
 	status = i2c_bit_add_bus(&adapter->i2c_adap);
 	}
 
-        mutex_init(&adapter->lmk_mutex);
+//        mutex_init(&adapter->lmk_mutex);
 
         if (adapter->hw.mac.type == e1000_i210 || adapter->hw.mac.type == e1000_i211) {
                 adapter->i2c_adap2.owner = THIS_MODULE;
@@ -5092,11 +5093,14 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                 // read OTP eeprom
                 for (i = 0; i <= 411; i++) {
                         if(adapter->i2c_pca9557_19) i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, ~0x04);
-                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, i >> 8, i & 0x00ff );
+
+                        res = read_lmk(adapter->i2c_lmk05318b, i);
                         if (res < 0) {err |= 0x80; continue;}
-                        lmkregs_old[i] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+                        lmkregs_old[i] = (u8)res;
+
                         if(adapter->i2c_pca9557_19) i2c_smbus_write_byte_data(adapter->i2c_pca9557_19, 1, ~0x02);
                 }
+
 
                 dev_info(pci_dev_to_dev(pdev), "LMK05318 REVID: 0x%02X, PARTID: 0x%08X, EEREV: 0x%02x, build:#%02d\n", lmkregs_old[3], (lmkregs_old[4]<<24 | lmkregs_old[5]<<16 | lmkregs_old[6]<<8 | lmkregs_old[7]), lmkregs_old[11], lmkregs_old[156] );
 
@@ -5110,16 +5114,13 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                         if (err) {
                                 // checking that the NVMCRCERR (R157[5]) = 0, and that NVMSCRC (R155) matches NVMLCRC (R158). details R158 description in the programming manual
                                 i = 157;//rNVMCRCERR
-                                i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, i >> 8, i & 0x00ff );
-                                rNVMCRCERR = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+				rNVMCRCERR = read_lmk(adapter->i2c_lmk05318b, i);
 
                                 i = 155;//rNVMSCRC
-                                i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, i >> 8, i & 0x00ff );
-                                rNVMSCRC = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+				rNVMSCRC = read_lmk(adapter->i2c_lmk05318b, i);
 
                                 i = 158;//rNVMLCRC
-                                i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, i >> 8, i & 0x00ff );
-                                rNVMLCRC = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+				rNVMLCRC = read_lmk(adapter->i2c_lmk05318b, i);
                                 dev_warn(&pdev->dev, "request_firmware failed, defaults loaded from OTP. NVMCRC:%s, NVMSCRC:0x%02x NVMLCRC:0x%02x\n", rNVMCRCERR & 0x20 ? "ERR" : "OK", rNVMSCRC, rNVMLCRC);
 			}
                 }
@@ -5461,7 +5462,7 @@ static void igb_remove(struct pci_dev *pdev)
 	igb_ptp_stop(adapter);
 #endif /* HAVE_PTP_1588_CLOCK */
 
-                mutex_destroy(&adapter->lmk_mutex);
+//                mutex_destroy(&adapter->lmk_mutex);
 
 	/* flush_scheduled work may reschedule our watchdog task, so
 	 * explicitly disable watchdog tasks from being rescheduled
@@ -7313,6 +7314,51 @@ unsigned int mcp4725_set_value2 ( struct igb_adapter *adapter )
         }
 }
 
+/**
+ * read_lmk - Read atomic 1 byte from 16-bit register of LMK05318B
+ * @client: Pointer to struct i2c_client
+ * @reg: 16-bit registeraddress to be read
+ *
+ * return the read byte (0-255) when succes, or negative error code.
+ */
+static int read_lmk(struct i2c_client *client, u16 reg)
+{
+    struct i2c_msg msgs[2];
+    u8 tx_buf[2];
+    u8 rx_buf[1];
+    int ret;
+
+    if (!client)
+        return -EINVAL;
+
+    /* 1. Split the 16-bit register address op (MSB first) */
+    tx_buf[0] = (u8)((reg >> 8) & 0xFF); /* High Byte */
+    tx_buf[1] = (u8)(reg & 0xFF);        /* Low Byte  */
+
+    /* message 1: write the 2-byte register address */
+    msgs[0].addr  = client->addr;
+    msgs[0].flags = 0;              /* WRITE */
+    msgs[0].len   = 2;
+    msgs[0].buf   = tx_buf;
+
+    /* message 2: read 1 byte data (via Repeated Start) */
+    msgs[1].addr  = client->addr;
+    msgs[1].flags = I2C_M_RD;       /* READ */
+    msgs[1].len   = 1;
+    msgs[1].buf   = rx_buf;
+
+    /* execute combined transfer on the bus ( bus_lock) */
+    ret = i2c_transfer(client->adapter, msgs, 2);
+
+    /* i2c_transfer returns the total suscessfully processed bytes (must be 2) */
+    if (ret == 2) {
+        return rx_buf[0]; /* Succes! return raw byte */
+    }
+
+    /* When ret >= 0 but not 2, translate this to I/O-error (-EIO) */
+    return (ret < 0) ? ret : -EIO;
+}
+
 int lmk05318_hinomlo(struct igb_adapter *adapter)
 {
         u8 lmkregs[512];
@@ -7322,15 +7368,17 @@ int lmk05318_hinomlo(struct igb_adapter *adapter)
         if( !adapter->i2c_lmk05318b ) return 0;
 
         for (i = 110; i <= 114; i++) {
-                res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, i >> 8, i & 0x00ff );
+                res = read_lmk(adapter->i2c_lmk05318b, i);
                 if (res < 0) continue;
-                lmkregs[i] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+                lmkregs[i] = (u8)res;
         }
 
+
+
         for (i = 123; i <= 127; i++) {
-                res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, i >> 8, i & 0x00ff );
+                res = read_lmk(adapter->i2c_lmk05318b, i);
                 if (res < 0) continue;
-                lmkregs[i] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
+                lmkregs[i] = (u8)res;
         }
 
         val1 = 0, val2 = 0;
@@ -7424,10 +7472,9 @@ static void igb_dpll_task(struct work_struct *work)
         }
 
                         lmkregi = 251;
-                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
-                        if (res < 0) goto nolmk;
-                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
-                        if (lmkregs[lmkregi] < 0) goto nolmk;
+                        res = read_lmk(adapter->i2c_lmk05318b, lmkregi);
+                        if (res < 0) goto skip;
+                        lmkregs[lmkregi] = (u8)res;
 
 
 
@@ -7485,48 +7532,41 @@ static void igb_dpll_task(struct work_struct *work)
                                 dev_warn(&adapter->pdev->dev, "OCXO %s (temperature = %li C, thresshold = %i)\n", ocxoready ? "ready" : "heating up", temp / 2000, lmkocxotemp);
                                 lmkocxotemp_l = lmkocxotemp;
                         }
-mutex_lock(&adapter->lmk_mutex);
-//adapter->lmkrefcount++;
                         lmkregi = adapter->lmkreg;
-                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
-                        if (res < 0) goto nolmk;
-                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
-                        if (lmkregs[lmkregi] < 0) goto nolmk;
+                        res = read_lmk(adapter->i2c_lmk05318b, lmkregi);
+                        if (res < 0) goto skip;
+                        lmkregs[lmkregi] = (u8)res;
 
                            ledctl2 = lmkregs[lmkregi];
                            adapter->ledctl2 = ledctl2;
 
+
                         lmkregi = 128;
-                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
-                        if (res < 0) goto nolmk;
-                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
-                        if (lmkregs[lmkregi] < 0) goto nolmk;
+                        res = read_lmk(adapter->i2c_lmk05318b, lmkregi);
+                        if (res < 0) goto skip;
+                        lmkregs[lmkregi] = (u8)res;
+
+
 
                         lmkregi = 167;
-                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
-                        if (res < 0) goto nolmk;
-                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
-                        if (lmkregs[lmkregi] < 0) goto nolmk;
+                        res = read_lmk(adapter->i2c_lmk05318b, lmkregi);
+                        if (res < 0) goto skip;
+                        lmkregs[lmkregi] = (u8)res;
 
                         lmkregi = 411;
-                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
-                        if (res < 0) goto nolmk;
-                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
-                        if (lmkregs[lmkregi] < 0) goto nolmk;
+                        res = read_lmk(adapter->i2c_lmk05318b, lmkregi);
+                        if (res < 0) goto skip;
+                        lmkregs[lmkregi] = (u8)res;
 
                         lmkregi = 13;
-                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
-                        if (res < 0) goto nolmk;
-                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
-                        if (lmkregs[lmkregi] < 0) goto nolmk;
+                        res = read_lmk(adapter->i2c_lmk05318b, lmkregi);
+                        if (res < 0) goto skip;
+                        lmkregs[lmkregi] = (u8)res;
 
                         lmkregi = 14;
-                        res = i2c_smbus_write_byte_data(adapter->i2c_lmk05318b, lmkregi >> 8, lmkregi & 0xff);
-                        if (res < 0) goto nolmk;
-                        lmkregs[lmkregi] = i2c_smbus_read_byte(adapter->i2c_lmk05318b);
-                        if (lmkregs[lmkregi] < 0) goto nolmk;
-mutex_unlock(&adapter->lmk_mutex);
-//adapter->lmkrefcount--;
+                        res = read_lmk(adapter->i2c_lmk05318b, lmkregi);
+                        if (res < 0) goto skip;
+                        lmkregs[lmkregi] = (u8)res;
 
                 if(adapter->i2c_tmpocxo) {
                         temp = tmp102_read(adapter->i2c_tmpocxo);
@@ -7728,6 +7768,7 @@ if( ledctl_old != adapter->ledctl ) {
 //              i2c_smbus_write_word_data(adapter->i2c_lmk05318b, 0x01, 0x60 | (0x01 << 8)); //DPLL_FDEV_REG_UPDATE decrement
         }
                                                                                                         
+skip:
 
                 msleep(960);
          }
