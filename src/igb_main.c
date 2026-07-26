@@ -7669,7 +7669,7 @@ eec_invalid_value          0
                         if(!init || (lmkregs[14] & 0x40) != (lmkregs_old[14] & 0x40) ) dev_warn(&adapter->pdev->dev, "DPLL %s", dpll_fl ? "frequency locked" : "loss of frequency lock");
                         if(!init || (lmkregs[14] & 0x80) != (lmkregs_old[14] & 0x80) ) dev_warn(&adapter->pdev->dev, "DPLL %s", dpll_pl ? "phase locked" : "loss of phase lock");
                         if(         (lmkregs[14] & 0x20) != (lmkregs_old[14] & 0x20) && dpll_hist) dev_warn(&adapter->pdev->dev, "DPLL Tuning word history update (%s)", datetimestring);
-                        if(         (lmkregs[14] & 0x20) != (lmkregs_old[14] & 0x20) && dpll_hist && adapter->i2c_dac1) dev_warn(&adapter->pdev->dev, "VCO Tuning word update (%i/%i) DAC:%i", adapter->dac1val_hist, dacval_hist_interval, adapter->dac1val );
+                        if(         (lmkregs[14] & 0x20) != (lmkregs_old[14] & 0x20) && dpll_hist && vco_mode && adapter->i2c_dac1) dev_warn(&adapter->pdev->dev, "VCO Tuning word update (%i/%i) DAC:%i", adapter->dac1val_hist, dacval_hist_interval, adapter->dac1val );
                         if(         (lmkregs[14] & 0x10) != (lmkregs_old[14] & 0x10) ) dev_warn(&adapter->pdev->dev, "DPLL Holdover event %s", dpll_hold ? "start" : "end");
                         if(         (lmkregs[14] & 0x08) != (lmkregs_old[14] & 0x08) ) dev_warn(&adapter->pdev->dev, "DPLL Reference switchover  %s", dpll_refswitch ? "1" : "0");
 

@@ -618,6 +618,28 @@ static u32 igb_get_link(struct net_device *netdev)
 	return igb_has_link(adapter);
 }
 
+static int igb_reset_interface(struct net_device *netdev, u32 *flags)
+{
+    struct igb_adapter *adapter = netdev_priv(netdev);
+
+    /* Check if the requested flags are supported (e.g. ALL or MAC) */
+    if (*flags & ~(ETH_RESET_MGMT | ETH_RESET_IRQ | ETH_RESET_DMA |
+                   ETH_RESET_FILTER | ETH_RESET_OFFLOAD | ETH_RESET_MAC |
+                   ETH_RESET_PHY | ETH_RESET_RAM | ETH_RESET_AP | ETH_RESET_ALL))
+        return -EINVAL;
+
+    if (netif_running(netdev)) {
+        igb_down(adapter);
+        igb_up(adapter);
+    } else {
+        igb_reset(adapter);
+    }
+
+    /* Report to ethtool which components have been successfully reset */
+    *flags = 0;
+    return 0;
+}
+
 static void igb_get_pauseparam(struct net_device *netdev,
 			       struct ethtool_pauseparam *pause)
 {
@@ -3880,6 +3902,7 @@ static const struct ethtool_ops igb_ethtool_ops = {
 	.set_pauseparam         = igb_set_pauseparam,
 	.self_test              = igb_diag_test,
 	.get_strings            = igb_get_strings,
+	.reset			= igb_reset_interface,
 #ifndef HAVE_RHEL6_ETHTOOL_OPS_EXT_STRUCT
 #ifdef HAVE_ETHTOOL_SET_PHYS_ID
 	.set_phys_id            = igb_set_phys_id,
