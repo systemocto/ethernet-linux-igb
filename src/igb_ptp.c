@@ -580,10 +580,10 @@ void igb_ptp_extts0_work_i210(struct work_struct *work)
         struct e1000_hw *hw = &adapter->hw;
         struct ptp_clock_event event;
         u32 regval = E1000_READ_REG(hw, E1000_CTRL);
+	int skip;
         /* prepare external stamp event */
         event.timestamp = E1000_READ_REG(hw, E1000_AUXSTMPL0);
         event.timestamp += E1000_READ_REG(hw, E1000_AUXSTMPH0) * NSEC_PER_SEC;
-	int skip;
 
 	skip = 0;
         // skip falling edge
@@ -612,10 +612,10 @@ void igb_ptp_extts1_work_i210(struct work_struct *work)
         struct e1000_hw *hw = &adapter->hw;
         struct ptp_clock_event event;
         u32 regval = E1000_READ_REG(hw, E1000_CTRL_EXT);
+	int skip;
         /* prepare external stamp event */
         event.timestamp = E1000_READ_REG(hw, E1000_AUXSTMPL1);
         event.timestamp += E1000_READ_REG(hw, E1000_AUXSTMPH1) * NSEC_PER_SEC;
-	int skip;
 
 	skip = 0;
         // skip falling edge
@@ -772,8 +772,9 @@ static int igb_ptp_enable_i210(struct ptp_clock_info *ptp,
 				(rq->extts.flags & PTP_EXTTS_EDGES) != PTP_EXTTS_EDGES)
 				return -EOPNOTSUPP;
 
-                        printk("%s (%d) Timestamping on channel %d %s: %s, edge:%s%s\n",__FUNCTION__,__LINE__, rq->extts.index, adapter->netdev->name,
+                        printk("%s (%d) Timestamping on channel %d %s: %s%s%s%s\n",__FUNCTION__,__LINE__, rq->extts.index, adapter->netdev->name,
 				(rq->extts.flags & PTP_ENABLE_FEATURE) ? "enabled":"disabled",
+				(rq->extts.flags & PTP_RISING_EDGE || rq->extts.flags & PTP_FALLING_EDGE) ? ", edge:":"",
 				(rq->extts.flags & PTP_RISING_EDGE) ? "R":"",
 				(rq->extts.flags & PTP_FALLING_EDGE) ? "F":""
 			);

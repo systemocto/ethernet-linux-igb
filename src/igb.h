@@ -744,6 +744,7 @@ struct igb_adapter {
         struct i2c_client *i2c_dac2;
         struct i2c_client *i2c_adc;
         struct i2c_client *i2c_gps;
+        struct i2c_client *i2c_mcu;
         struct i2c_client *i2c_tmp;
         struct i2c_client *i2c_tmpocxo;
 

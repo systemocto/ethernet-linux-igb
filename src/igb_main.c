@@ -2189,7 +2189,7 @@ static void igb_set_i2c_clk2(void *data, int state)
 
         E1000_WRITE_REG(hw, E1000_CTRL_EXT, ctrl_ext);
 	E1000_WRITE_FLUSH(hw);
-//      usleep_range(adapter->i2c_algo.udelay, adapter->i2c_algo.udelay + 10);
+//        usleep_range(adapter->i2c_algo.udelay, adapter->i2c_algo.udelay + 10);
 }
 
 /***************************************************************
@@ -2236,6 +2236,47 @@ static void igb_i2c_post_xfer(struct i2c_adapter *i2c_adap)
 }
 */
 
+
+static void i2c_prep_recovery2(struct i2c_adapter *adap)
+{
+        struct i2c_algo_bit_data *algo = adap->algo_data;
+
+        struct igb_adapter *adapter = container_of(algo, struct igb_adapter, i2c_algo2);
+        struct e1000_hw *hw = &adapter->hw;
+        u32 ctrl_ext;
+
+        ctrl_ext = E1000_READ_REG(hw, E1000_CTRL_EXT);
+        ctrl_ext &= ~(E1000_CTRL_EXT_SDP2_DIR | E1000_CTRL_EXT_SDP3_DIR);
+        E1000_WRITE_REG(hw, E1000_CTRL_EXT, ctrl_ext);
+        E1000_WRITE_FLUSH(hw);
+        udelay(10);
+}
+
+static void i2c_unprep_recovery2(struct i2c_adapter *adap)
+{
+        struct i2c_algo_bit_data *algo = adap->algo_data;
+
+        struct igb_adapter *adapter = container_of(algo, struct igb_adapter, i2c_algo2);
+        struct e1000_hw *hw = &adapter->hw;
+
+        E1000_WRITE_FLUSH(hw);
+        udelay(100);
+}
+
+static int i2c_recover_bus2(struct i2c_adapter *adap)
+{
+        int ret;
+
+        ret = i2c_generic_scl_recovery(adap);
+
+        if (ret == 0)
+                dev_info(&adap->dev, "I2C bus successfully recovered from NAK/hang\n");
+        else
+                dev_warn(&adap->dev, "I2C bus recovery failed: %d\n", ret);
+
+        return ret;
+}
+
 static const struct i2c_algo_bit_data igb_i2c_algo = {
 	.setsda		= igb_set_i2c_data,
 	.setscl		= igb_set_i2c_clk,
@@ -2250,14 +2291,25 @@ static const struct i2c_algo_bit_data igb_i2c_algo2 = {
         .setscl         = igb_set_i2c_clk2,
         .getsda         = igb_get_i2c_data2,
         .getscl         = igb_get_i2c_clk2,
-        .udelay         = 5,
-        /* Wait up to 50 ms for slave to let us pull SCL high */
-        .timeout        = DIV_ROUND_UP(HZ, 20),
+        .udelay         = 5,// 500/25 = 20KHz
+        /* Wait up to 100 ms for slave to let us pull SCL high */
+        .timeout        = DIV_ROUND_UP(HZ, 10),
 //        .timeout        = 20, // jiffies
 //        .post_xfer      = igb_i2c_post_xfer,
 //        .pre_xfer       = igb_i2c_pre_xfer,
 };
 
+static struct i2c_bus_recovery_info igb_recovery_info = {
+        .recover_bus     = i2c_recover_bus2,
+        .prepare_recovery   = i2c_prep_recovery2,
+        .unprepare_recovery = i2c_unprep_recovery2,
+
+        /* bit-bang pins for recovery-engine */
+        .set_scl             = (void (*)(struct i2c_adapter *, int))igb_set_i2c_clk2,
+        .get_scl             = (int (*)(struct i2c_adapter *))igb_get_i2c_clk2,
+        .get_sda             = (int (*)(struct i2c_adapter *))igb_get_i2c_data2,
+        .set_sda             = (void (*)(struct i2c_adapter *, int))igb_set_i2c_data2,
+};
 
 static struct i2c_board_info rtc_info = {
         I2C_BOARD_INFO("pcf8563", (0x51)),
@@ -2319,6 +2371,10 @@ static struct i2c_board_info eeprom2_info = {
         I2C_BOARD_INFO("eeprom_2", (0x54)),
 };
 
+static struct i2c_board_info mcu_info = {
+        I2C_BOARD_INFO("mcu", (0x30)),
+};
+
 
 
 /*  igb_init_i2c - Init I2C interface
@@ -2342,6 +2398,7 @@ static s32 igb_init_i2c(struct igb_adapter *adapter)
         struct i2c_client *i2c_eeprom; // 0x50
         struct i2c_client *i2c_dac1; // 0x60 VCO
         struct i2c_client *i2c_dac2; // 0x61 DAC2
+        struct i2c_client *i2c_mcu; // 0x30 MCU
 //        int sec_bin, min_bin, hour_bin, mday_bin,  wday_bin, mon_bin, year_bin;
         int ret;
         int rtctype = 0; // 1:pcf8563, 2:m41t81, 3:ds1307
@@ -2382,6 +2439,7 @@ static s32 igb_init_i2c(struct igb_adapter *adapter)
                 adapter->i2c_adap2.algo_data = &adapter->i2c_algo2;
                 adapter->i2c_adap2.dev.parent = &adapter->pdev->dev;
                 adapter->i2c_adap2.nr         = i2c_bus; //adapter->dipsw
+		adapter->i2c_adap2.bus_recovery_info = &igb_recovery_info;
 
 if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
 
@@ -2638,6 +2696,21 @@ geen_eeprom:
                         }
                 }
         }
+
+#ifdef HAVE_MCU32
+        i2c_mcu = i2c_new_client_device1(&adapter->i2c_adap2, &mcu_info);
+        if (i2c_mcu == NULL) {
+                dev_info(&adapter->pdev->dev,
+                         "Failed to create i2c device mcu.\n");
+        } else {
+                ret = i2c_smbus_read_byte(i2c_mcu);
+                if ( ret < 0 ) {
+                        adapter->i2c_mcu = 0;
+                } else {
+                        adapter->i2c_mcu = i2c_mcu;
+                }
+        }
+#endif
 
 //probe RTC
         if( adapter->part_boardfeatures & 0x04) {
@@ -5032,8 +5105,8 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
 0x266 0x02 lmk05318B
 0x266 0x04 TMP102 ocxo
 0x266 0x08 WDT
-0x266 0x10
-0x266 0x20
+0x266 0x10 GNSS
+0x266 0x20 MCU
 0x266 0x40
 0x266 0x80
 */
@@ -5053,7 +5126,7 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                 }
 
                 if( ((part_boardfeatures & 0xff) != 0xff && (part_boardfeatures & 0xff) != 0x00)  )
-                        dev_info(pci_dev_to_dev(pdev), "NVM board features (0x%04x): %s%s%s%s%s%s%s%s %s%s%s%s%s",
+                        dev_info(pci_dev_to_dev(pdev), "NVM board features (0x%04x): %s%s%s%s%s%s%s%s %s%s%s%s%s%s",
                         part_boardfeatures,
                         part_boardfeatures & 0x01 ? "DAC1 " : "",
                         part_boardfeatures & 0x02 ? "VCO " : "",
@@ -5068,7 +5141,8 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                         part_boardfeatures & 0x0200 ? "DPLL " : "",
                         part_boardfeatures & 0x0400 ? "OCXO-TMP " : "",
                         part_boardfeatures & 0x0800 ? "WDT " : "",
-                        part_boardfeatures & 0x1000 ? "GNSS " : ""
+                        part_boardfeatures & 0x1000 ? "GNSS " : "",
+                        part_boardfeatures & 0x1000 ? "MCU " : ""
                 );
 
         }
@@ -7331,7 +7405,7 @@ static int read_lmk(struct i2c_client *client, u16 reg)
     if (!client)
         return -EINVAL;
 
-    /* 1. Split the 16-bit register address op (MSB first) */
+    /* 1. Split the 16-bit register address (MSB first) */
     tx_buf[0] = (u8)((reg >> 8) & 0xFF); /* High Byte */
     tx_buf[1] = (u8)(reg & 0xFF);        /* Low Byte  */
 
@@ -7347,7 +7421,7 @@ static int read_lmk(struct i2c_client *client, u16 reg)
     msgs[1].len   = 1;
     msgs[1].buf   = rx_buf;
 
-    /* execute combined transfer on the bus ( bus_lock) */
+    /* execute combined transfer on the bus (atomic bus_lock) */
     ret = i2c_transfer(client->adapter, msgs, 2);
 
     /* i2c_transfer returns the total suscessfully processed bytes (must be 2) */
@@ -9066,9 +9140,9 @@ static void igb_tsync_interrupt(struct igb_adapter *adapter)
         struct e1000_hw *hw = &adapter->hw;
         struct ptp_clock_event event;
         struct timespec64 ts;
-	static const u32 igb_sdp_val[IGB_N_SDP] = {
-		E1000_TS_SDP0_DATA, E1000_TS_SDP1_DATA, E1000_CTRL_EXT_SDP2_DATA, E1000_CTRL_EXT_SDP3_DATA,
-	};
+//	static const u32 igb_sdp_val[IGB_N_SDP] = {
+//		E1000_TS_SDP0_DATA, E1000_TS_SDP1_DATA, E1000_CTRL_EXT_SDP2_DATA, E1000_CTRL_EXT_SDP3_DATA,
+//	};
 
         u32 ack = 0, tsauxc, sec, nsec, tsicr = E1000_READ_REG(hw, E1000_TSICR);
 
