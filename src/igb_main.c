@@ -383,7 +383,7 @@ MODULE_PARM_DESC(dacval_hist_interval, "VCO DAC update interval (default:300, 0:
 
 static int lmkfw = 0;
 module_param(lmkfw, int, S_IRUSR | S_IWUSR);
-MODULE_PARM_DESC(lmkfw, "DPLL firmware load (default read from OTP)");
+MODULE_PARM_DESC(lmkfw, "DPLL firmware load (default 0:read from OTP)");
 
 static int lmkocxotemp = 55;
 module_param(lmkocxotemp, int, S_IRUSR | S_IWUSR);
@@ -2409,11 +2409,7 @@ static s32 igb_init_i2c(struct igb_adapter *adapter)
 //		return E1000_SUCCESS;
 
         /* I2C interface supported on i350 devices */
-        if (adapter->hw.mac.type != e1000_i350) {
-//              netdev_err(adapter->netdev,
-//                      "not i350\n");
-//              return 0;
-        } else {
+        if (adapter->hw.mac.type == e1000_i350) {
 
 	/* Initialize the i2c bus which is controlled by the registers.
 	 * This bus will use the i2c_algo_bit structue that implements
@@ -2427,6 +2423,7 @@ static s32 igb_init_i2c(struct igb_adapter *adapter)
 	strscpy(adapter->i2c_adap.name, "igb BB",
 		sizeof(adapter->i2c_adap.name));
 	status = i2c_bit_add_bus(&adapter->i2c_adap);
+
 	}
 
 //        mutex_init(&adapter->lmk_mutex);
@@ -2625,7 +2622,7 @@ if( i2c_leds & 0x08 ) adapter->i2c_algo2.getscl = NULL;
         }
         ret = i2c_smbus_read_byte(i2c_eeprom);
         if ( ret < 0 ) {
-                dev_info(&adapter->pdev->dev, "Failed to create eeprom_1.\n");
+//                dev_info(&adapter->pdev->dev, "Failed to create eeprom_1.\n");
                 i2c_unregister_device(i2c_eeprom);
                 adapter->i2c_eeprom = 0;
 //                i2c_eeprom = i2c_new_device(&adapter->i2c_adap2, &eeprom2_info);
@@ -2863,8 +2860,11 @@ void igb_led_set(struct igb_adapter *adapter, int led, u16 brightness)
         if(adapter->i2c_dipsw->addr == 0x20)
                 i2c_smbus_write_byte(adapter->i2c_dipsw, ~ledctl);
 
-        if(adapter->i2c_dipsw->addr == 0x18)
+        if(adapter->i2c_dipsw->addr == 0x18) {
+		i2c_smbus_write_byte_data(adapter->i2c_dipsw, 2, 0x00);
+		i2c_smbus_write_byte_data(adapter->i2c_dipsw, 3, 0xf0);
                 i2c_smbus_write_byte_data(adapter->i2c_dipsw, 1, ~ledctl & 0x0f);
+	}
 
         if( ! (i2c_leds & 0x08)) mutex_unlock(&adapter->led_mutex);
 }
@@ -3404,8 +3404,8 @@ static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len)
 #define EE_TEMPT 0x06 // OCXO temp threshold
 #define EE_LEDMAP_BASE 0x07 // 0x00..0x0F
 #define EE_LMKREG_BASE 0x10 // max len 32 *3 +2 = 0x10..0x72
-#define EE_DAC1_BASE 0x74 // 0x74..0x77
-#define EE_PHYXOPPB 0x78 // int xtalcal ppb's 0x78..0x79
+#define EE_DAC1_BASE 0x74 // 0x74..0x79 valH,valL,mode,interval
+#define EE_PHYXOPPB 0x80 // int xtalcal ppb's 0x78..0x79
 #define EE_CDCEREG_BASE 0xa0 //max len 31 *2 +2 = 0xa0..0xE0
    int res=-1;
    int i = 0;
@@ -3535,14 +3535,18 @@ static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len)
         res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE);
         if (res != 0x4f) return -1;
 
-        len = 1;
-        res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + ((u8)len * 2 +1) );
+        len = 4; // vH,vL,mode,interval
+        res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + ((u8)len +1) );
         if( res != 0x6f /* o */) return -7;
         else {
                 int dac1val;
                 dev_info(&adapter->pdev->dev, "%s (%d): Found DAC1 block @ 0x%04x\n", __FUNCTION__,__LINE__, EE_DAC1_BASE);
                 dac1val = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + 1 );
                 dac1val += i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + 2 ) << 8;
+		adapter->dac1val_hist = 2 ^ i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + 3 );
+		adapter->vco_mode = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + 4 );
+
+		if(adapter->vco_mode < 1 || adapter->vco_mode > 2 || adapter->dac1val_hist == 0) {adapter->vco_mode = 0; }
                 if(dac1val < 8 || dac1val > 4090) {
                         dev_info(&adapter->pdev->dev, "%s (%d): DAC1 value out of range (%d)\n", __FUNCTION__,__LINE__, dac1val);
                         return -3;
@@ -5135,7 +5139,7 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                         part_boardfeatures & 0x10 ? "GPI2 " : "",
                         part_boardfeatures & 0x20 ? "TMP " : "",
                         part_boardfeatures & 0x40 ? "EEPROM " : "",
-                        part_boardfeatures & 0x80 ? "0x80 " : "",
+                        part_boardfeatures & 0x80 ? "0x80 " : "",//reserved
 
                         part_boardfeatures & 0x0100 ? "CDCE " : "",
                         part_boardfeatures & 0x0200 ? "DPLL " : "",
@@ -5386,7 +5390,7 @@ if (adapter->xtalcal) {
 		}
 #ifdef IGB_HWMON
 
-		igb_sysfs_init(adapter);
+//		igb_sysfs_init(adapter);
 #else
 #ifdef IGB_PROCFS
 
@@ -7603,7 +7607,7 @@ static void igb_dpll_task(struct work_struct *work)
                                         temp = tmp102_read(adapter->i2c_tmpocxo);
                                         ocxoready = tmp102_read_alert(adapter->i2c_tmpocxo) ? 1 : 0;
                                 }
-                                dev_warn(&adapter->pdev->dev, "OCXO %s (temperature = %li C, thresshold = %i)\n", ocxoready ? "ready" : "heating up", temp / 2000, lmkocxotemp);
+                                dev_warn(&adapter->pdev->dev, "OCXO %s (temperature = %li C, thresshold = %i C)\n", ocxoready ? "ready" : "heating up", temp / 2000, lmkocxotemp);
                                 lmkocxotemp_l = lmkocxotemp;
                         }
                         lmkregi = adapter->lmkreg;

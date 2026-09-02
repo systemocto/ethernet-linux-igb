@@ -755,6 +755,7 @@ struct igb_adapter {
 	u16 dac1val;
 	u16 dac2val;
 	int dac1val_hist;
+	int vco_mode;
 
         s32 xtalcal;
 

@@ -331,6 +331,7 @@ static int igb_ptp_adjfine_82580(struct ptp_clock_info *ptp, long scaled_ppm)
 
 
 
+/*
                 if(adapter->i2c_dipsw->addr == 0x20)
                         i2c_smbus_write_byte(adapter->i2c_dipsw, ~ledctl);
                 if(adapter->i2c_dipsw->addr == 0x18)
@@ -341,7 +342,7 @@ static int igb_ptp_adjfine_82580(struct ptp_clock_info *ptp, long scaled_ppm)
                         i2c_smbus_write_byte(adapter->i2c_dipsw, ~ledctl);
                 if(adapter->i2c_dipsw->addr == 0x18)
                         i2c_smbus_write_byte_data(adapter->i2c_dipsw, 1, ~ledctl & 0x0f);
-
+*/
 
         }
                                                                                                         
