@@ -5232,6 +5232,7 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
                         sscanf(parse_buffer, "R%d\t0x%06X", &regnamenum, &reghreglregv );
                         //dev_info(&pdev->dev, "R%d\t0x%06X  strlen=%d reg:%d=%d addrh=0x%02X addrl=0x%02X value=0x%02X\n", regnamenum, reghreglregv, strlen(parse_buffer), regnamenum, reghreglregv>>8, reghreglregv >> 16, reghreglregv>>8 & 0x00ff, reghreglregv & 0x0000ff);
                         // i2c write
+			//TODO skip reserved registers like R148 (BAW VCO center frequency calibration)
                         if(lmkregs_old[regnamenum] != (reghreglregv & 0x0000ff)) {
                                 dev_info(pci_dev_to_dev(pdev), "[LFW] R%d\t0x%06X \tstrlen=%ld reg:%d=%d addrh=0x%02X addrl=0x%02X value=0x%02X (old 0x%02X)\n", regnamenum, reghreglregv, strlen(parse_buffer), regnamenum, reghreglregv>>8, reghreglregv >> 16, reghreglregv>>8 & 0x00ff, reghreglregv & 0x0000ff, lmkregs_old[regnamenum]);
                                 res = i2c_smbus_write_word_data(adapter->i2c_lmk05318b, reghreglregv >> 16, (reghreglregv>>8 & 0x00ff) | ((reghreglregv & 0x0000ff) << 8));
