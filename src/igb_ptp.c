@@ -587,10 +587,6 @@ void igb_ptp_extts0_work_i210(struct work_struct *work)
         event.timestamp += E1000_READ_REG(hw, E1000_AUXSTMPH0) * NSEC_PER_SEC;
 
 	skip = 0;
-        // skip falling edge
-//        if(!adapter->doubleedge && !(regval & E1000_TS_SDP0_DATA)) {
-//                return;
-//        }
 
 	udelay(5);
 	//rising edge
@@ -619,18 +615,14 @@ void igb_ptp_extts1_work_i210(struct work_struct *work)
         event.timestamp += E1000_READ_REG(hw, E1000_AUXSTMPH1) * NSEC_PER_SEC;
 
 	skip = 0;
-        // skip falling edge
-//        if(!adapter->doubleedge && !(regval & E1000_TS_SDP1_DATA)) {
-//                return;
-//        }
 
 	udelay(5);
 	//rising edge
-        if ( (adapter->ts0_flags & PTP_RISING_EDGE) && !(adapter->ts0_flags & PTP_FALLING_EDGE) && !(regval & E1000_TS_SDP1_DATA) )
+        if ( (adapter->ts1_flags & PTP_RISING_EDGE) && !(adapter->ts1_flags & PTP_FALLING_EDGE) && !(regval & E1000_TS_SDP1_DATA) )
 		skip = 1;
 
 	//falling edge
-        if ( (adapter->ts0_flags & PTP_FALLING_EDGE) && !(adapter->ts0_flags & PTP_RISING_EDGE) && (regval & E1000_TS_SDP1_DATA) )
+        if ( (adapter->ts1_flags & PTP_FALLING_EDGE) && !(adapter->ts1_flags & PTP_RISING_EDGE) && (regval & E1000_TS_SDP1_DATA) )
 		skip = 1;
 
 

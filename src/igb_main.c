@@ -393,10 +393,6 @@ static int dco_step = 0x00;
 module_param(dco_step, int, S_IRUSR | S_IWUSR);
 MODULE_PARM_DESC(dco_step, "LMK05318B DPLL_FDEV (default 0x00, max 0x1fffff)");
 
-static bool doubleedge;
-module_param(doubleedge, bool, S_IRUSR | S_IWUSR);
-MODULE_PARM_DESC(doubleedge, "extpps timestamp on rising and falling edge");
-
 static int dpll_0_state = 0x00;
 module_param(dpll_0_state, int, S_IRUSR | S_IWUSR);
 MODULE_PARM_DESC(dpll_0_state, "DPLL_UNKNOWN = -1, DPLL_INVALID = 0, DPLL_FREERUN = 1, DPLL_LOCKED = 2, DPLL_LOCKED_HO_ACQ = 3, DPLL_HOLDOVER = 4");
@@ -3404,7 +3400,7 @@ static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len)
 #define EE_TEMPT 0x06 // OCXO temp threshold
 #define EE_LEDMAP_BASE 0x07 // 0x00..0x0F
 #define EE_LMKREG_BASE 0x10 // max len 32 *3 +2 = 0x10..0x72
-#define EE_DAC1_BASE 0x74 // 0x74..0x79 valH,valL,mode,interval
+#define EE_DAC1_BASE 0x74 // 0x74..0x79 valH,valL,mode,interval default{08,00,02,06}
 #define EE_PHYXOPPB 0x80 // int xtalcal ppb's 0x78..0x79
 #define EE_CDCEREG_BASE 0xa0 //max len 31 *2 +2 = 0xa0..0xE0
    int res=-1;
@@ -3532,6 +3528,10 @@ static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len)
    }//lmk block
 
 //dac1
+//2 VCO DAC value init
+//1 VCO DAC calibration mode 0=disabled, 1=frequency locked, 2=phase locked, 3=freq lock and store, 4=phase lock and store
+//2 VCO DAC history update frequency (hist*4 seconds) 86400/4=21600, 21600/100=216
+//2 VCO DAC value stored
         res = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE);
         if (res != 0x4f) return -1;
 
@@ -3543,10 +3543,11 @@ static int read_eeprom_lmk(struct igb_adapter *adapter, u32 *data, int len)
                 dev_info(&adapter->pdev->dev, "%s (%d): Found DAC1 block @ 0x%04x\n", __FUNCTION__,__LINE__, EE_DAC1_BASE);
                 dac1val = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + 1 );
                 dac1val += i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + 2 ) << 8;
-		adapter->dac1val_hist = 2 ^ i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + 3 );
-		adapter->vco_mode = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + 4 );
+                adapter->dac1val_hist = 4 * i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + 3 );
+                adapter->vco_mode = i2c_smbus_read_byte_data(adapter->i2c_eeprom, EE_DAC1_BASE + 4 );
 
-		if(adapter->vco_mode < 1 || adapter->vco_mode > 2 || adapter->dac1val_hist == 0) {adapter->vco_mode = 0; }
+                // only support mode 1 and 2 for now
+                if(adapter->vco_mode < 1 || adapter->vco_mode > 2 || adapter->dac1val_hist == 0) {adapter->vco_mode = 0; }
                 if(dac1val < 8 || dac1val > 4090) {
                         dev_info(&adapter->pdev->dev, "%s (%d): DAC1 value out of range (%d)\n", __FUNCTION__,__LINE__, dac1val);
                         return -3;
@@ -5296,8 +5297,6 @@ offset 0x266-0x269 part_boardfeatures(16b) format2 mask
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-        adapter->doubleedge = doubleedge;
 
         if (ret_val || xtalcal!=0)
                 part_xtalcal = xtalcal;
@@ -7323,8 +7322,6 @@ static void igb_watchdog_task(struct work_struct *work)
 
 	igb_spoof_check(adapter);
 
-        adapter->doubleedge = doubleedge;
-
 	/* Reset the timer */
 	if (!test_bit(__IGB_DOWN, adapter->state)) {
 		if (adapter->flags & IGB_FLAG_NEED_LINK_UPDATE)
@@ -7500,6 +7497,8 @@ static void vcodac_task(struct work_struct *work)
                 if(adapter->dac1val_hist > dacval_hist_interval) adapter->dac1val_hist = dacval_hist_interval;
                 if(dac1val_histi++ > dacval_hist_interval ) {
                         if (adapter->dac1val_hist > 0) dacval--; else if (adapter->dac1val_hist < 0) dacval++;
+                        if(dacval < 2) dacval = 2;
+                        if(dacval > 4094) dacval = 4094;
                         if(dacval_old != dacval && adapter->dac1val_hist != 0) {
                                 adapter->dac1val = dacval_old = dacval;
                                 res = mcp4725_set_value(adapter );
